@@ -107,3 +107,11 @@ SQLite 单文件（`data/muse_me.db`），表见报告 Step 5 + `scripts/script_
 | 存储 | sqlite3（标准库） | 单人 Demo 足够；StorePort 隔离可换 PG |
 | 模型 | MockModel 默认；OpenRouterModel 可选（urllib） | 离线可演示；真模型一键切换 |
 | 测试 | unittest（标准库） | 零依赖；`python -m unittest discover` |
+
+## 增补（2026-10-24）：控制面一级包 server/（Fastify + TypeScript）
+
+按 li 定版，控制面从 Python 包中独立为与 `src/`、`frontend/` 平级的一级包 `server/`：
+
+- **分工**：`server/`（TS/Fastify）是控制面——给前端提供 API + 操作管理 AWS AgentCore（运行时资源 CRUD、带会话调用与事件流转发），并持有应用状态（聊天/脚本/任务/审批）与调度；`src/muse_me`（Python）是被 AgentCore 托管的 Agent 本体（执行层 + Harness + 工具），对外满足 AgentCore HTTP 契约。拆分动因：AgentCore 会话跑在临时 microVM（单会话上限约 8 小时、文件系统不持久），状态与 Bot 调度不能放进运行时。
+- **分层（六大原则落位）**：`domain/`（领域类型 + 按聚合拆分的小端口接口 + RuntimePort 五法）、`application/`（用例服务，只依赖端口）、`infrastructure/`（node:sqlite 存储、LocalRuntime、AgentCore 运行时与管理客户端）、`api/`（薄控制器，入参严校验，序列化单点收口）；`app.ts` 为唯一组合根。换运行时实现只改组合根（开闭/里氏），存储接口按聚合隔离（接口隔离），框架与 SDK 不渗透应用层（依赖倒置/迪米特）。
+- **第一期范围**：登录（muse_session cookie 契约与 Python 版一致）、聊天发送→SSE→审批挂起/决策续跑→完成、运行记录、AgentCore 健康与管理接口；feed/scripts/jobs/memories/files 等路由待逐个迁移。AgentCore 客户端为真实现但未做真实 AWS 联调（需 li 的 AWS 账号配置），未配置时健康口径明示 not_configured。
