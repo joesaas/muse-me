@@ -1,0 +1,7 @@
+{
+  "id": "case-03-memory-inference-gate",
+  "kind": "memory_inference_gate",
+  "description": "推断类记忆未批准不生效，进待批准区；批准后才 active",
+  "input": {"content": "用户可能偏好高波动 meme 标的"},
+  "expect": {"active_before_approval": false, "active_after_approval": true}
+}

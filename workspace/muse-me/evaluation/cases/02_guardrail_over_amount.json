@@ -1,0 +1,7 @@
+{
+  "id": "case-02-guardrail-over-amount",
+  "kind": "guardrail_over_amount",
+  "description": "买入金额超过模拟上限（policy max_sim_amount_usd=1000）被护栏拦截，Run 失败收口",
+  "input": {"intent": "买 BONK", "amount_usd": 99999},
+  "expect": {"run_failed": true}
+}

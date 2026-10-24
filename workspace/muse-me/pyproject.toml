@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "muse-me"
+version = "0.1.0"
+description = "类 Muse 个人 Agent Demo：Web 交互 + Agent 运行时适配层 + 完整 Harness 工程"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.setuptools.packages.find]
+where = ["src"]

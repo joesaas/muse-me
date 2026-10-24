@@ -1,0 +1,1 @@
+{"description":"脚本运行停在审批门（awaiting_approval），批准后续跑完成（done）；以事件计数断言已完成步不重复执行（每步 step_done/tool_called 各恰 1 次，序列以 run_done 收尾）","expect":{"final_status":"done","steps_executed_once":true,"suspended_status":"awaiting_approval"},"id":"case-05-resume-after-approval","input":{"intent":"买这个 meme，100 美元，先查流动性"},"kind":"resume_after_approval"}
