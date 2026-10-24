@@ -1,0 +1,6 @@
+[
+  "tests/test_agentcore_contract.py::TestAgentCoreContract::test_invoke_suspends_then_resume_completes",
+  "tests/test_agentcore_contract.py::TestAgentCoreContract::test_ping_healthy",
+  "tests/test_agentcore_contract.py::TestAgentCoreContract::test_resume_without_suspended_state_fails_honestly",
+  "tests/test_agentcore_contract.py::TestImportErrorIsClear::test_missing_sdk_error_mentions_install"
+]

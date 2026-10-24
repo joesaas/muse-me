@@ -9,5 +9,10 @@ description = "类 Muse 个人 Agent Demo：Web 交互 + Agent 运行时适配�
 requires-python = ">=3.11"
 dependencies = []
 
+# 可选入口：AgentCore Agent 侧（src/muse_me/agentcore_app.py）。
+# 主包仍零依赖；只有部署到 Bedrock AgentCore 时才装这组。
+[project.optional-dependencies]
+agentcore = ["bedrock-agentcore>=1.25"]
+
 [tool.setuptools.packages.find]
 where = ["src"]

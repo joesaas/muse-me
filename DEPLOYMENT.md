@@ -8,7 +8,7 @@
 |---|---|---|
 | A 单机全栈 | Python 一进程跑全部：API + 前端静态页 + 调度。最简单 | ✅ 现行默认 |
 | B 控制面分离 | `server/` 独立进程提供全部 API 并管理 AgentCore；Python 做 Agent 本体 | ✅ server 第二期已迁完全部路由并同源托管前端，前端默认指向 server（Python 侧同名 API 保留作回退） |
-| C AgentCore 托管 | Agent 本体部署进 AWS Bedrock AgentCore，server 经 ARN 调用 | 🔧 控制面客户端已实现；Agent 侧入口待补（见 Step 5） |
+| C AgentCore 托管 | Agent 本体部署进 AWS Bedrock AgentCore，server 经 ARN 调用 | 🔧 控制面客户端已实现；Agent 侧入口已补齐并本地跑通 8080 契约，待 AWS 部署与真实联调（见 Step 5） |
 
 ## Step 0 前置要求
 
@@ -80,11 +80,17 @@ cd server && npm run build && cd ..                    # 控制面有改动时
 
 ## Step 5 形态 C：把 Agent 部署进 AgentCore（目标形态）
 
-现状如实：server 侧的调用与管理客户端是真实现、已本地验证协议形状；**Agent 侧的 AgentCore 入口模块尚未补**，以下为补齐后执行的标准流程。
+现状如实：server 侧的调用与管理客户端是真实现、已本地验证协议形状；**Agent 侧入口已补齐并本地跑通 8080 契约**（`src/muse_me/agentcore_app.py`，官方 SDK `bedrock-agentcore` 的 `BedrockAgentCoreApp` + 异步生成器入口，内部组装现有模型/Orchestrator/ToolRegistry/harness 护栏；契约测试 `tests/test_agentcore_contract.py` 覆盖「新调用停审批 → 同 session resume 到 run_done → 无挂起态 resume 如实 run_failed」三段）。**尚未执行的是 AWS 侧部署与真实联调**（需 li 的 AWS 账号），流程如下。
 
 1. **准备 AWS**：开通 Bedrock 与 AgentCore，建执行角色（权限：调用 Bedrock 模型 + 写 CloudWatch 日志），记下区域（如 `us-east-1`）。
-2. **补 Agent 入口**：在 Python 包加 `agentcore_app.py`——用官方 SDK `bedrock-agentcore` 的 `BedrockAgentCoreApp` 暴露入口，内部驱动现有 Orchestrator；本地起服后自测契约：`GET :8080/ping` 返回健康、`POST :8080/invocations` 能跑完一次运行并流式返回事件。
-3. **部署**：直接代码部署（迭代最快）：入口文件 + 依赖打包为 zip，运行时选 `PYTHON_3_12`、架构 `linux/arm64`；或用 AgentCore CLI `agentcore deploy`。部署成功后记下 **Runtime ARN**。
+2. **本地自测契约**（部署前先过一遍）：
+   ```bash
+   python3 -m venv .venv-agentcore && .venv-agentcore/bin/pip install -r requirements-agentcore.txt
+   PYTHONPATH=src .venv-agentcore/bin/python -m muse_me.agentcore_app   # 监听 8080
+   curl http://127.0.0.1:8080/ping                                        # {"status":"Healthy",...}
+   .venv-agentcore/bin/python -m pytest tests/test_agentcore_contract.py  # 三段契约
+   ```
+3. **部署**：直接代码部署（迭代最快）：`bash scripts/package_agentcore.sh` 产出 `dist/muse-me-agentcore.zip`（入口垫片 + `muse_me/` 源码 + `harness/` + 按 arm64 目标装入的依赖）；运行时选 `PYTHON_3_12`、架构 `linux/arm64`、入口 `agentcore_app.py`；或用 AgentCore CLI `agentcore deploy`。部署成功后记下 **Runtime ARN**。
 4. **接控制面**：
 
 ```bash

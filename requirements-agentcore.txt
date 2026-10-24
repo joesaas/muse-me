@@ -1,0 +1,6 @@
+# MuseMe Agent 侧部署到 AWS Bedrock AgentCore 的依赖（形态 C）。
+# 主包 muse_me 零依赖，本文件只服务 src/muse_me/agentcore_app.py 入口。
+# 版本为 2026-10-24 本地实测装到的版本（Python 3.12 / bedrock-agentcore 1.25.0）。
+# 传递依赖（boto3、starlette、uvicorn、pydantic 等）由 pip 按 SDK 声明自动解析；
+# 打包时 scripts/package_agentcore.sh 会以 arm64 目标装进部署 zip。
+bedrock-agentcore==1.25.0
