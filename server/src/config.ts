@@ -19,6 +19,10 @@ export interface ServerConfig {
   userId: string;
   runtimeMode: RuntimeMode;
   agentcore: AgentCoreConfig;
+  /** 前端静态根（SERVER_WEB_ROOT）；空串表示组合根按默认位置（仓库根 web/）解析。 */
+  webRoot: string;
+  /** 是否启动进程内调度守护（SERVER_SCHEDULER=0 关闭）。 */
+  startScheduler: boolean;
 }
 
 export const DEFAULT_PASSWORD = "demo";
@@ -50,6 +54,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
       region: (env.AGENTCORE_REGION || env.AWS_REGION || "").trim(),
       runtimeArn: (env.AGENTCORE_RUNTIME_ARN || "").trim(),
     },
+    webRoot: env.SERVER_WEB_ROOT?.trim() || "",
+    startScheduler: env.SERVER_SCHEDULER?.trim() !== "0",
   };
 }
 

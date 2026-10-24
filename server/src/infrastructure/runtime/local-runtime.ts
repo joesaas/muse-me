@@ -1,8 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { InvalidTransition } from "../../domain/errors.js";
-import type { InvokeContext, RunStore, RuntimePort } from "../../domain/ports.js";
+import type {
+  InvokeContext,
+  RunSnapshotStore,
+  RunStore,
+  RuntimePort,
+} from "../../domain/ports.js";
 import { assertRunTransition, isTerminalRunStatus } from "../../domain/run-state.js";
 import type {
+  ChatPlanSnapshot,
   RunEventDraft,
   RunEventRecord,
   RunRecord,
@@ -30,6 +36,9 @@ interface SuspendedRun {
  * step_done …敏感步先落 approval_required 并把 Run 置 awaiting_approval 后
  * 结束本次流；审批通过后由应用层以 resumeRunId 再次 invoke 续跑。
  * 事件与状态都经 RunStore 落库，轨迹即可回放的事实。
+ *
+ * 二期：挂起时把续跑快照（计划/挂起步/已花费）同步落 RunSnapshotStore，
+ * 进程内存 Map 降为缓存——server 重启后 awaiting 的 Run 仍可从快照重建续跑。
  */
 export class LocalRuntime implements RuntimePort {
   private readonly sessions = new Map<string, SessionInfo>();
@@ -37,7 +46,10 @@ export class LocalRuntime implements RuntimePort {
   private readonly active = new Set<string>();
   private readonly cancelled = new Set<string>();
 
-  constructor(private readonly runs: RunStore) {}
+  constructor(
+    private readonly runs: RunStore,
+    private readonly snapshots?: RunSnapshotStore,
+  ) {}
 
   createSession(userId: string, scene = "chat"): SessionInfo {
     const session: SessionInfo = {
@@ -96,6 +108,7 @@ export class LocalRuntime implements RuntimePort {
     let spent = spentBefore;
     for (let i = fromIndex; i < plan.steps.length; i++) {
       if (this.cancelled.has(runId)) {
+        this.snapshots?.deleteSnapshot(runId);
         this.transition(runId, "cancelled");
         return;
       }
@@ -106,13 +119,16 @@ export class LocalRuntime implements RuntimePort {
           label: stepDef.label,
           tool: stepDef.tool,
         });
-        this.suspended.set(runId, { plan, nextIndex: i, spentUsd: spent });
+        const state: SuspendedRun = { plan, nextIndex: i, spentUsd: spent };
+        this.suspended.set(runId, state);
+        this.persistSnapshot(runId, state);
         this.transition(runId, "awaiting_approval");
         return;
       }
       yield* this.executeStep(runId, i, stepDef);
       spent += stepDef.costUsd;
     }
+    this.snapshots?.deleteSnapshot(runId);
     yield this.emit(runId, "run_done", {
       spent_usd: Number(spent.toFixed(6)),
       simulated: true,
@@ -146,7 +162,7 @@ export class LocalRuntime implements RuntimePort {
     runId: string,
     approvedStep: number | undefined,
   ): AsyncIterable<RunEventDraft> {
-    const state = this.suspended.get(runId);
+    const state = this.suspended.get(runId) ?? this.loadSnapshot(runId);
     if (!state) {
       throw new InvalidTransition(
         `Run ${runId} 的挂起状态不存在（服务可能已重启），无法续跑，请重新发起`,
@@ -178,6 +194,11 @@ export class LocalRuntime implements RuntimePort {
       return true;
     }
     if (this.suspended.delete(runId)) {
+      this.snapshots?.deleteSnapshot(runId);
+      return true;
+    }
+    if (this.snapshots?.getSnapshot(runId)) {
+      this.snapshots.deleteSnapshot(runId);
       return true;
     }
     return false;
@@ -198,6 +219,30 @@ export class LocalRuntime implements RuntimePort {
   }
 
   // ---------------- 内部 ----------------
+
+  /** 挂起快照落库：{plan, nextIndex, spentUsd}，与内存 Map 同步写。 */
+  private persistSnapshot(runId: string, state: SuspendedRun): void {
+    this.snapshots?.saveSnapshot(runId, "chat_plan", {
+      plan: state.plan,
+      nextIndex: state.nextIndex,
+      spentUsd: state.spentUsd,
+    } satisfies ChatPlanSnapshot as unknown as Record<string, unknown>);
+  }
+
+  /** 内存无挂起态时从快照重建（server 重启后续跑的路径），并回填内存缓存。 */
+  private loadSnapshot(runId: string): SuspendedRun | undefined {
+    const snap = this.snapshots?.getSnapshot(runId);
+    if (!snap || snap.kind !== "chat_plan") return undefined;
+    const payload = snap.payload as unknown as ChatPlanSnapshot;
+    if (!payload.plan || typeof payload.nextIndex !== "number") return undefined;
+    const state: SuspendedRun = {
+      plan: payload.plan as SimulatedPlan,
+      nextIndex: payload.nextIndex,
+      spentUsd: Number(payload.spentUsd ?? 0),
+    };
+    this.suspended.set(runId, state);
+    return state;
+  }
 
   private emit(runId: string, type: string, payload: Record<string, unknown>): RunEventRecord {
     return this.runs.addEvent(runId, { type, payload });

@@ -45,15 +45,21 @@ src/
 tests/             vitest：config 守卫 / 审批与运行时链路 / handler 级校验 / AgentCore 未配置口径
 ```
 
-## 本期 API 子集（字段与 Python 版契约一致）
+## API 全集（第二期已迁完，字段与 Python 版契约一致）
 
 - `POST /api/login`（口令换 `muse_session` cookie，HttpOnly；其余 /api/* 无 cookie 一律 401）
-- `GET|POST /api/chats`、`GET /api/chats/:id/messages`、`POST /api/chats/:id/send` -> `{run_id}`
+- `GET|POST /api/chats`、`GET /api/chats/:id/messages`、`POST /api/chats/:id/send` -> `{run_id}`（支持 feed_item_id 带入精选与 script_build 构建话题）
 - `GET /api/events?run_id=&after=`（SSE 按 seq 增量、支持续传、终态/awaiting 关流、15s 心跳）
+- `GET /api/feed`、`POST /api/feed/refresh`、`GET|PUT /api/prompts/feed`、`GET /api/prompts/feed/versions`、`POST /api/prompts/feed/rollback`
+- `GET /api/scripts`、`GET /api/scripts/:id`、`POST /api/scripts/:id/trial`、`POST /api/scripts/:id/run`、`POST /api/scripts/build`
+- `GET|POST /api/jobs`、`POST /api/jobs/:id/toggle`（进程内调度守护：time/event/condition 三触发；非法 trigger 创建即 400）
 - `GET /api/approvals`、`POST /api/approvals/:id/decide`（`approved` 必须为 JSON 布尔，非布尔 400）
+- `GET|POST /api/memories`、`POST /api/memories/:id/decide`（只许 pending，非 pending 409）、`DELETE /api/memories/:id`（204）
+- `GET /api/files`、`GET /api/files/:id/download`、`GET /api/settings/connections`
 - `GET /api/runs`、`GET /api/runs/:id`（带事件回放）、`POST /api/runs/:id/cancel`
 - `GET /api/agent/health`、`GET|POST /api/agent/runtimes`、`GET|PUT|DELETE /api/agent/runtimes/:id`
-- `GET /health`（免鉴权探活）
+- `GET /` 与 `/assets/*`：同源托管仓库根 `web/` 前端（`SERVER_WEB_ROOT` 可改）；`GET /health` 免鉴权探活
+- 待审批运行的计划快照落库（run_snapshots 表）：server 重启后 awaiting 的运行仍可经审批续跑
 
 ## AgentCore 口径（诚实原则）
 

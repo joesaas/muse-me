@@ -3,8 +3,10 @@ import { GuardrailDenied, NotFound } from "../domain/errors.js";
 import type {
   ApprovalStore,
   ChatStore,
+  FeedStore,
   RunStore,
   RuntimePort,
+  ScriptDraftSaver,
 } from "../domain/ports.js";
 import { TOOL_RISKS, type Approval, type Chat, type Message, type RunRecord } from "../domain/types.js";
 import { nowIso } from "../infrastructure/sqlite/database.js";
@@ -35,6 +37,8 @@ export class ChatService {
     private readonly runtime: RuntimePort,
     private readonly userId: string,
     private readonly replyFor: ReplyGenerator,
+    private readonly feedStore?: FeedStore,
+    private readonly scriptSaver?: ScriptDraftSaver,
   ) {}
 
   // ---------- 话题 ----------
@@ -53,6 +57,21 @@ export class ChatService {
     };
     this.chats.createChat(chat);
     if (input.scene) this.sceneByChat.set(chat.id, input.scene);
+    // 带入精选上下文（同 Python create_chat）：落一条 system 消息，
+    // 实体以 k=v 形式拼入，话题页与后续构建草稿都能看到来源条目。
+    if (input.feedItemId && this.feedStore) {
+      const item = this.feedStore.getFeedItem(input.feedItemId);
+      if (item) {
+        const entities = Object.entries(item.entities ?? {})
+          .map(([k, v]) => `${k}=${String(v)}`)
+          .join(", ");
+        this.addMessage(
+          chat.id,
+          "system",
+          `【精选上下文】${item.title}——${item.summary}（实体：${entities}）`,
+        );
+      }
+    }
     return chat;
   }
 
@@ -109,6 +128,15 @@ export class ChatService {
     const reply = this.replyFor(text);
     this.addMessage(chat.id, "assistant", reply);
     this.runs.addEvent(run.id, { type: "assistant_delta", payload: { text: reply } });
+    // script_build 话题：把这次做法保存/更新为同名脚本（同 Python _save_script_from_chat）。
+    if (scene === "script_build" && this.scriptSaver) {
+      const note = this.scriptSaver.saveFromChat({
+        chatId: chat.id,
+        userText: text,
+        feedItemId: chat.feedItemId,
+      });
+      if (note) this.addMessage(chat.id, "assistant", note);
+    }
     return { runId: run.id, reply };
   }
 

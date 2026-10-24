@@ -3,11 +3,17 @@ import type { ApprovalStore, RunStore } from "../domain/ports.js";
 import type { Approval } from "../domain/types.js";
 import type { ChatService } from "./chat.service.js";
 
+/** 脚本运行续跑端口（组合根注入 ScriptService，避免审批服务直依赖引擎细节）。 */
+export interface ScriptResumer {
+  resume(runId: string): unknown;
+}
+
 /**
  * 审批用例：列表与决策。决策口径（评审定版）：
  * - 只允许对 pending 决策：先读分型（不存在 404 / 已决策 409），
  *   再经 store 的原子条件更新落决策，并发下只有一方生效；
- * - 批准后按 Run 来源续跑（本期只有 chat 来源，经 ChatService 在原 Run 上续）；
+ * - 批准后按 Run 来源续跑：有 script_id 走脚本引擎续跑（同 Python
+ *   ApprovalService 的来源分发），其余 chat 来源经 ChatService 在原 Run 上续；
  * - 拒绝则把 Run 收口为 failed 并回一条助手消息。
  */
 export class ApprovalService {
@@ -16,6 +22,7 @@ export class ApprovalService {
     private readonly runs: RunStore,
     private readonly chats: ChatService,
     private readonly userId: string,
+    private readonly scripts?: ScriptResumer,
   ) {}
 
   list(status?: string): Approval[] {
@@ -53,7 +60,9 @@ export class ApprovalService {
       this.chats.denyRun(run, reason);
       return decided;
     }
-    if (run.source === "chat" || run.chatId) {
+    if (run.scriptId && this.scripts) {
+      this.scripts.resume(run.id);
+    } else if (run.source === "chat" || run.chatId) {
       await this.chats.resumeAfterApproval(run, decided);
     }
     return decided;

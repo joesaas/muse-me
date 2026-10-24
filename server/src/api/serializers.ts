@@ -1,9 +1,14 @@
 import type {
   Approval,
   Chat,
+  FeedItemRecord,
+  FileRecord,
+  JobRecord,
+  MemoryRecord,
   Message,
   RunEventRecord,
   RunRecord,
+  ScriptRecord,
 } from "../domain/types.js";
 
 /**
@@ -92,4 +97,63 @@ export function runJson(
   };
   if (events) out.events = events.map(eventJson);
   return out;
+}
+
+/** 精选条目（同 Python feed_json：entities dict 展开为 {label, value, kind} 数组）。 */
+export function feedJson(item: FeedItemRecord): Record<string, unknown> {
+  return {
+    id: item.id,
+    title: item.title,
+    summary: item.summary,
+    entities: Object.entries(item.entities ?? {}).map(([k, v]) => ({
+      label: String(v),
+      value: String(v),
+      kind: String(k),
+    })),
+    source: item.source,
+    published_at: item.publishedAt,
+  };
+}
+
+/** 脚本（同 Python script_json：params 取 doc.params）。 */
+export function scriptJson(script: ScriptRecord): Record<string, unknown> {
+  const params = Array.isArray(script.doc?.params) ? script.doc.params : [];
+  return {
+    id: script.id,
+    name: script.name,
+    description: script.description,
+    version: script.currentVersion,
+    params,
+  };
+}
+
+/** 定时任务（同 Python _job_json：trigger 合併 type 与 spec，last_status 由服务层查）。 */
+export function jobJson(job: JobRecord, lastStatus: string): Record<string, unknown> {
+  return {
+    id: job.id,
+    name: job.name,
+    script_id: job.scriptId,
+    trigger: { type: job.triggerType, ...(job.triggerSpec ?? {}) },
+    enabled: job.enabled,
+    next_run_at: job.nextFireAt,
+    last_status: lastStatus,
+  };
+}
+
+export function memoryJson(item: MemoryRecord): Record<string, unknown> {
+  return {
+    id: item.id,
+    content: item.content,
+    level: item.level,
+    status: item.status,
+  };
+}
+
+export function fileJson(row: FileRecord): Record<string, unknown> {
+  return {
+    id: row.id,
+    name: row.name,
+    kind: row.kind,
+    created_at: row.createdAt,
+  };
 }

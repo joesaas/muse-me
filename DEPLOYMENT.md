@@ -7,7 +7,7 @@
 | 形态 | 说明 | 状态 |
 |---|---|---|
 | A 单机全栈 | Python 一进程跑全部：API + 前端静态页 + 调度。最简单 | ✅ 现行默认 |
-| B 控制面分离 | `server/` 独立进程提供 API 并管理 AgentCore；Python 做 Agent 本体 | ⚠️ server 第一期子集已通（登录/聊天/审批/运行/Agent 管理），其余路由在 Python 侧 |
+| B 控制面分离 | `server/` 独立进程提供全部 API 并管理 AgentCore；Python 做 Agent 本体 | ✅ server 第二期已迁完全部路由并同源托管前端，前端默认指向 server（Python 侧同名 API 保留作回退） |
 | C AgentCore 托管 | Agent 本体部署进 AWS Bedrock AgentCore，server 经 ARN 调用 | 🔧 控制面客户端已实现；Agent 侧入口待补（见 Step 5） |
 
 ## Step 0 前置要求
@@ -47,7 +47,7 @@ SERVER_PASSWORD=<自定义口令> npm start                 # 默认 127.0.0.1:8
 - 配置见 `server/.env.example`（可复制为 `.env` 或直接传环境变量）。
 - 验证：`curl http://127.0.0.1:8787/api/agent/health` —— 未配 AWS 时应返回 `runtimeMode: "local"` 且 `agentcore.status: "not_configured"`，这是正常口径，不是报错。
 - server 用自己的库 `server/data/server.db`（`SERVER_DB` 可改），与 Python 的库互不干扰。
-- 注意：前端目前仍指向 Python 的 API；server 的路由是第一期子集，未迁完前不要把前端基地址切过去。
+- 前端由 server 同源托管（`web/`）并调用 server 的 API，已完成切换；Python 进程的同名 API 与静态托管保留，可作回退。
 
 ## Step 3 对外提供服务（绑非本机地址时必读）
 

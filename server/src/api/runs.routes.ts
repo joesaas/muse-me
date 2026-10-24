@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { ChatService } from "../application/chat.service.js";
 import { NotFound } from "../domain/errors.js";
-import type { ChatStore, RunStore } from "../domain/ports.js";
+import type { ChatStore, RunStore, ScriptStore } from "../domain/ports.js";
 import { runJson } from "./serializers.js";
 
 /** 运行记录薄控制器：列表/详情（带事件回放）/取消。标题组装与 Python _run_json 同口径。 */
@@ -11,8 +11,14 @@ export function registerRunRoutes(
   chats: ChatStore,
   chatService: ChatService,
   userId: string,
+  scripts?: ScriptStore,
 ): void {
-  const titleOf = (run: { chatId: string | null; scene: string }): string => {
+  const titleOf = (run: {
+    chatId: string | null;
+    scriptId: string | null;
+    scene: string;
+  }): string => {
+    if (run.scriptId) return scripts?.getScript(run.scriptId)?.name ?? "脚本运行";
     if (run.chatId) return chats.getChat(run.chatId)?.title ?? run.scene;
     return run.scene;
   };
