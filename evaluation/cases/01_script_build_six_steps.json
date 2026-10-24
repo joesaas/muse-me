@@ -1,0 +1,12 @@
+{
+  "id": "case-01-script-build-six-steps",
+  "kind": "script_build_six_steps",
+  "description": "新闻构建脚本命中六步：抽实体(scan)→查风险(scan)→报价(quote)→模拟(sim_swap)→审批(门位2)→保存",
+  "input": {
+    "intent": "买这个 meme，100 美元，先查流动性",
+    "feed_title": "Solana 生态 meme 币 BONK 单日交易量创新高",
+    "feed_summary": "BONK 流动性池深度一周内翻倍",
+    "entities": {"token": "BONK", "chain": "solana"}
+  },
+  "expect": {"tools": ["meme.scan", "dex.quote", "dex.sim_swap"], "gate": 2}
+}

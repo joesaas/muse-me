@@ -1,0 +1,7 @@
+{
+  "id": "case-04-job-time-trigger-approval",
+  "kind": "job_time_trigger_approval",
+  "description": "定时任务到点执行（time 触发），Aave 脚本敏感步（模拟存入）自动转审批",
+  "input": {"trigger": {"type": "time", "every_minutes": 60}},
+  "expect": {"approval_pending": true, "job_runs_min": 1}
+}

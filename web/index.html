@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MuseMe · 我的个人助手</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="login" class="login hidden">
+  <div class="login-card">
+    <h1>我的个人助手</h1>
+    <p>输入口令进入（演示默认口令 demo，可在启动时用环境变量改）</p>
+    <input id="login-pw" type="password" placeholder="口令">
+    <button id="login-btn">进入</button>
+    <p id="login-err" class="err"></p>
+  </div>
+</div>
+
+<div id="app" class="layout hidden">
+  <aside class="side">
+    <div class="brand">我的个人助手</div>
+    <nav id="menu">
+      <button data-view="chat" class="active">💬 聊天</button>
+      <button data-view="feed">📰 今日精选</button>
+      <button data-view="scripts">🧰 我的脚本</button>
+      <button data-view="jobs">⏰ 定时任务</button>
+      <button data-view="approvals">✅ 待我确认 <span id="appr-badge" class="badge hidden">0</span></button>
+      <button data-view="files">📁 我的文件</button>
+    </nav>
+    <div class="more">
+      <div class="more-title">更多</div>
+      <button data-view="runs">📜 执行记录</button>
+      <button data-view="memories">🧠 它记得的事</button>
+      <button data-view="settings">🔗 账号与连接</button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <section id="view-chat" class="view">
+      <div class="chat-wrap">
+        <div class="chat-list">
+          <button id="new-chat">＋ 新话题</button>
+          <ul id="chats"></ul>
+        </div>
+        <div class="chat-pane">
+          <div id="messages" class="messages"></div>
+          <div class="composer">
+            <textarea id="input" rows="2" placeholder="说你想做的事，例如：看到一条新闻想买里面的 meme，100 美元，先查流动性"></textarea>
+            <button id="send">发送</button>
+            <button id="stop" class="ghost">停止</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="view-feed" class="view hidden">
+      <div class="bar"><h2>今日精选</h2><button id="feed-prompt-btn" class="ghost">我想看什么</button><button id="feed-refresh">刷新精选</button></div>
+      <div id="feed-prompt-box" class="card hidden">
+        <label>我想看什么（提示词，保存后生成新版本）</label>
+        <textarea id="feed-prompt" rows="4"></textarea>
+        <button id="feed-prompt-save">保存</button><button id="feed-prompt-rollback" class="ghost">回到上一版</button><span id="feed-prompt-ver" class="muted"></span>
+      </div>
+      <div id="feed-items" class="cards"></div>
+    </section>
+
+    <section id="view-scripts" class="view hidden">
+      <div class="bar"><h2>我的脚本</h2><span class="muted">脚本是和助手在聊天里一起做出来的个性化程序</span></div>
+      <div id="script-items" class="cards"></div>
+    </section>
+
+    <section id="view-jobs" class="view hidden">
+      <div class="bar"><h2>定时任务</h2><span class="muted">到点自动运行你保存的脚本</span></div>
+      <div id="job-items" class="cards"></div>
+    </section>
+
+    <section id="view-approvals" class="view hidden">
+      <div class="bar"><h2>待我确认</h2><span class="muted">花钱或重要操作都会先停在这里等你拍板</span></div>
+      <div id="approval-items" class="cards"></div>
+    </section>
+
+    <section id="view-files" class="view hidden">
+      <div class="bar"><h2>我的文件</h2></div>
+      <div id="file-items" class="cards"></div>
+    </section>
+
+    <section id="view-runs" class="view hidden">
+      <div class="bar"><h2>执行记录</h2><button id="runs-refresh" class="ghost">刷新</button></div>
+      <div id="run-items" class="cards"></div>
+      <div id="run-detail" class="card hidden"></div>
+    </section>
+
+    <section id="view-memories" class="view hidden">
+      <div class="bar"><h2>它记得的事</h2><span class="muted">推测类的内容要你批准后才算数</span></div>
+      <div id="memory-items" class="cards"></div>
+    </section>
+
+    <section id="view-settings" class="view hidden">
+      <div class="bar"><h2>账号与连接</h2></div>
+      <div id="connection-items" class="cards"></div>
+    </section>
+  </main>
+</div>
+<script type="module" src="app.js"></script>
+</body>
+</html>
