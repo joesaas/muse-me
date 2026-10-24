@@ -18,6 +18,7 @@ from typing import Any
 
 from . import services as svc
 from .api import make_handler
+from .errors import DemoError
 from .feed import FeedGenerator, SeedNews
 from .harness_files import HarnessFiles
 from .llm import MockModel, OpenRouterModel
@@ -26,7 +27,7 @@ from .scheduler import SchedulerDaemon
 from .seed import seed_if_empty
 from .services import DEFAULT_USER
 from .storage import SqliteStore
-from .tools import ToolRegistry
+from .tools import ToolRegistry, validate_catalog
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -73,10 +74,20 @@ class App:
 
 
 def _make_model(config: dict[str, Any]) -> Any:
+    """模型装配：未知值/openrouter 缺 key 一律抛错，不静默降级。
+
+    静默降级会让使用者以为在跑真模型（评审 P2），且配置拼写错误永远发现
+    不了。默认路径（不配 model）仍是 mock，行为不变。
+    """
     choice = str(config.get("model") or os.environ.get("MUSE_ME_MODEL", "mock"))
-    if choice == "openrouter" and os.environ.get("OPENROUTER_API_KEY"):
+    if choice == "mock":
+        return MockModel()
+    if choice == "openrouter":
+        if not os.environ.get("OPENROUTER_API_KEY"):
+            raise DemoError(
+                "model=openrouter 但未配置 OPENROUTER_API_KEY，拒绝静默降级为 mock")
         return OpenRouterModel()
-    return MockModel()
+    raise DemoError(f"未知 model 配置：{choice}（只支持 mock / openrouter）")
 
 
 def create_app(config: dict[str, Any] | None = None) -> App:
@@ -102,6 +113,11 @@ def create_app(config: dict[str, Any] | None = None) -> App:
             body=str(note.get("body") or ""), kind=str(note.get("kind") or "info")))
 
     registry = ToolRegistry(notify_sink=notify_sink)
+    # 启动校验（设计 §5）：harness/tools/catalog.md（正本）与工具注册表必须
+    # 一致，不一致启动失败——catalog 缺失时 catalog_text() 同样抛 DemoError。
+    if not validate_catalog(harness.catalog_text()):
+        raise DemoError(
+            "harness/tools/catalog.md 与工具注册表不一致（名称/风险级），拒绝启动")
     model = _make_model(config)
     runtime = LocalRuntime(model=model, tool_call=registry.call, store=store,
                            policy=policy, user_id=user_id)

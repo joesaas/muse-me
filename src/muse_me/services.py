@@ -27,7 +27,7 @@ from .domain import (
     RunStatus,
     Script,
 )
-from .errors import GuardrailDenied, NotFound
+from .errors import GuardrailDenied, InvalidTransition, NotFound, ValidationFailed
 from .execution import Orchestrator
 from .feed import FeedGenerator
 from .scheduler import next_fire
@@ -148,22 +148,45 @@ class ChatService:
     def _create_chat_approval(
         self, run_id: str, scene: str, text: str, event: RunEvent
     ) -> Approval:
+        """按挂起事件补建 Approval 行：金额/风险只从事件与本 run 已落库
+        事件推导，**不再重演 model.plan 猜金额**（评审 P2）。
+
+        - approval_required 事件 payload 实际只带 {step, label, tool}
+          （execution._exec_step），plan_created 也只带步数——两者都没有
+          金额/风险字段，这是已核实的现状；
+        - 金额：payload 若将来带 amount_usd 优先；否则扫本 run 已落库的
+          tool_called 事件，取最近一次调用 args 里的 amount_usd/amount
+          （旗舰计划里报价步与成交步同额；取不到则 None，不编造）；
+        - 风险：payload 若带 risk 优先；否则按事件里的工具名查注册表
+          风险级；注册表也查不到才回退 "write"（写类默认从严）。
+        """
         payload = event.payload or {}
         step_path = str(payload.get("step") or "0")
-        step_index = int(step_path) if step_path.isdigit() else 0
-        amount = None
-        try:
-            plan = self._model.plan(scene, text)
-            if 0 <= step_index < len(plan.steps):
-                value = plan.steps[step_index].args.get("amount_usd")
-                if isinstance(value, (int, float)):
-                    amount = float(value)
-        except Exception:
+        head = step_path.split(".", 1)[0]
+        step_index = int(head) if head.isdigit() else 0
+        tool_name = str(payload.get("tool") or "")
+        amount = payload.get("amount_usd")
+        if not isinstance(amount, (int, float)) or isinstance(amount, bool):
             amount = None
+            for past in self._store.list_run_events(run_id):
+                if past.type != "tool_called":
+                    continue
+                args = (past.payload or {}).get("args") or {}
+                for key in ("amount_usd", "amount"):
+                    value = args.get(key)
+                    if isinstance(value, (int, float)) and not isinstance(value, bool):
+                        amount = float(value)
+        risk = str(payload.get("risk") or "")
+        if not risk and tool_name:
+            get_tool = getattr(self._registry, "get_tool", None)
+            tool = get_tool(tool_name) if get_tool is not None else None
+            if tool is not None and getattr(tool, "risk", None):
+                risk = str(tool.risk)
         return self._store.create_approval(Approval(
             run_id=run_id, step_index=step_index,
-            action=str(payload.get("tool") or payload.get("label") or "敏感操作"),
-            risk="write", amount_usd=amount))
+            action=tool_name or str(payload.get("label") or "敏感操作"),
+            risk=risk or "write",
+            amount_usd=float(amount) if amount is not None else None))
 
     def _upsert_script(self, script: Script) -> Script:
         """同名脚本不新建重复项：更新已有脚本的 doc（仓库层自动递增版本）。"""
@@ -203,12 +226,29 @@ class ChatService:
         plan = self._model.plan(scene, goal)
         if run.status == RunStatus.AWAITING_APPROVAL:
             self._store.update_run_status(run.id, RunStatus.RUNNING)
+        # 与脚本路径（scripts_engine.resume_script）看齐：先从已落库事件
+        # 重建「已完成步集合 + 已花费」，续跑只算新产生的成本；execution 的
+        # resume 语义保证已批准步之前的步不再执行，这里再加一层双保险——
+        # 万一收到已完成步的重复事件，既不重落轨迹也不重复计费。
+        prior_events = self._store.list_run_events(run.id)
+        completed_before = {
+            str((e.payload or {}).get("step"))
+            for e in prior_events
+            if e.type == "step_done" and (e.payload or {}).get("step") is not None
+        }
+        spent_before = sum(
+            float((e.payload or {}).get("cost_usd") or 0.0)
+            for e in prior_events if e.type == "step_done")
         orchestrator = Orchestrator(tool_call=self._registry.call, policy=self._policy)
         suspended = failed = False
         for event in orchestrator.run_plan(
-            plan, {"run_id": run.id},
+            plan, {"run_id": run.id, "spent_usd": spent_before},
             resume_from={"approved": [str(approval.step_index)]},
         ):
+            step_path = str((event.payload or {}).get("step") or "")
+            if (event.type in ("step_started", "tool_called", "step_done")
+                    and step_path in completed_before):
+                continue  # 已完成步的重复事件：不落轨迹、不计费
             event.run_id = run.id
             event.seq = 0  # 交给 store 自动续号，避免与首跑 seq 冲突
             self._store.add_run_event(event)
@@ -406,6 +446,13 @@ class JobService:
                   script_id=script_id, trigger_type=trigger_type,
                   trigger_spec=trigger, params=dict(params or {}),
                   script_version=script_version, enabled=True)
+        # 创建时先校验触发规格（scheduler.validate_trigger），非法不落库，
+        # 不等调度 tick 时才爆（评审 P2，与 scheduler P0 互为因果的一半）。
+        from .scheduler import validate_trigger
+
+        problem = validate_trigger(job)
+        if problem is not None:
+            raise ValidationFailed(f"触发条件不合法：{problem}")
         from datetime import datetime
 
         job.next_fire_at = next_fire(job, datetime.now().astimezone())
@@ -485,8 +532,16 @@ class MemoryService:
         return self.list(status=MemoryStatus.ACTIVE.value)
 
     def decide(self, memory_id: str, approved: bool) -> MemoryItem:
-        if self._store.get_memory(memory_id) is None:
+        item = self._store.get_memory(memory_id)
+        if item is None:
             raise NotFound(f"记忆不存在：{memory_id}")
+        # 服务层前置：只有 pending（待批准区）的记忆可裁决；对已生效/已
+        # 拒绝的记忆再 decide 是状态冲突，先给明确错误（与 storage 的
+        # 原子前置条件同口径，storage 仍是并发下的最后防线）。
+        status = getattr(item.status, "value", item.status)
+        if status != MemoryStatus.PENDING.value:
+            raise InvalidTransition(
+                f"记忆已不在待批准区（当前状态 {status}），不可再裁决：{memory_id}")
         return self._store.decide_memory(memory_id, approved)
 
     def delete(self, memory_id: str) -> bool:

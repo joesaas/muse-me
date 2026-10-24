@@ -140,6 +140,19 @@ def make_handler(app: Any):
             self.end_headers()
             self.wfile.write(body)
 
+        def _approved_flag(self, body: dict[str, Any]) -> bool:
+            """decide 类接口的 approved 必须为 JSON 布尔：字符串 "false"
+            经 bool() 强转会变 True（批准），语义反转代价最高，必须严校验。"""
+            value = body.get("approved")
+            if not isinstance(value, bool):
+                raise ValidationFailed("approved 必须是布尔值 true 或 false")
+            return value
+
+        def _send_no_content(self) -> None:
+            self.send_response(204)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
         def _send_text(self, status: int, text: str, ctype: str,
                        filename: str | None = None) -> None:
             body = text.encode("utf-8")
@@ -203,8 +216,10 @@ def make_handler(app: Any):
                 return self._api(method, path, parse_qs(parsed.query))
             except DemoError as exc:
                 return self._send_json(error_status(exc), {"error": str(exc)})
-            except Exception as exc:  # API 层收口，不漏堆栈给前端
-                return self._send_json(500, {"error": f"internal: {exc}"})
+            except Exception as exc:  # API 层收口：细节只进服务端日志，
+                # 客户端只拿固定文案，不漏内部异常原文（路径/SQL 片段）
+                print(f"[api] internal error: {exc!r}")
+                return self._send_json(500, {"error": "internal error"})
 
         def _login(self) -> None:
             body = self._body()
@@ -280,7 +295,7 @@ def make_handler(app: Any):
                 if method == "POST":
                     body = self._body()
                     decided = approvals_svc.decide(
-                        seg[1], bool(body.get("approved")),
+                        seg[1], self._approved_flag(body),
                         str(body.get("reason") or ""))
                     return self._send_json(200, approval_json(decided))
             if seg == ["feed"]:
@@ -388,12 +403,12 @@ def make_handler(app: Any):
             if len(seg) == 3 and seg[0] == "memories" and seg[2] == "decide":
                 if method == "POST":
                     body = self._body()
-                    item = memories_svc.decide(seg[1], bool(body.get("approved")))
+                    item = memories_svc.decide(seg[1], self._approved_flag(body))
                     return self._send_json(200, memory_json(item))
             if len(seg) == 2 and seg[0] == "memories":
                 if method == "DELETE":
                     memories_svc.delete(seg[1])
-                    return self._send_json(204, None)
+                    return self._send_no_content()
             if seg == ["settings", "connections"] and method == "GET":
                 return self._send_json(200, services["settings"].connections())
             if seg == ["files"]:

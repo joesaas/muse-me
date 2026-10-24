@@ -4,6 +4,7 @@
 仓库根需在 sys.path（discover 在仓库根执行时 src 布局由此文件补路径）。
 """
 import sys
+import threading
 import unittest
 from pathlib import Path
 
@@ -21,6 +22,7 @@ from muse_me.domain import (  # noqa: E402
     Message,
     Notification,
     Run,
+    RunEvent,
     RunStatus,
     Script,
     validate_transition,
@@ -150,6 +152,97 @@ class TestStorage(unittest.TestCase):
                          ["openrouter"])
         self.store.add_file(USER, "报告.html", "report", "files/1", size=10)
         self.assertEqual(len(self.store.list_files(USER)), 1)
+
+
+class TestStorageConcurrency(unittest.TestCase):
+    """评审 P0 回归：决策原子化、create 去 OR REPLACE、seq 分配无竞态。"""
+
+    def setUp(self):
+        self.store = SqliteStore(":memory:")
+
+    def tearDown(self):
+        self.store.close()
+
+    def _run_pair(self, fn_a, fn_b):
+        """两线程齐步并发执行 fn_a/fn_b，返回 (成功结果 list, 异常 list)。"""
+        barrier = threading.Barrier(2)
+        results, errors = [], []
+
+        def worker(fn):
+            barrier.wait(timeout=5)
+            try:
+                results.append(fn())
+            except Exception as exc:  # noqa: BLE001 - 测试里收集后统一断言类型
+                errors.append(exc)
+
+        threads = [threading.Thread(target=worker, args=(f,)) for f in (fn_a, fn_b)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10)
+        return results, errors
+
+    def test_concurrent_decide_approval_exactly_one_wins(self):
+        run = self.store.create_run(Run(user_id=USER))
+        ap = self.store.create_approval(
+            Approval(run_id=run.id, step_index=0, action="dex.sim_swap", risk="write")
+        )
+        results, errors = self._run_pair(
+            lambda: self.store.decide_approval(ap.id, "approved"),
+            lambda: self.store.decide_approval(ap.id, "denied"),
+        )
+        self.assertEqual(len(results), 1)
+        self.assertEqual(len(errors), 1)
+        self.assertIsInstance(errors[0], InvalidTransition)
+        self.assertIn(
+            self.store.get_approval(ap.id).status.value, ("approved", "denied")
+        )
+
+    def test_concurrent_run_terminal_status_single_winner(self):
+        run = self.store.create_run(Run(user_id=USER))
+        results, errors = self._run_pair(
+            lambda: self.store.update_run_status(run.id, "done"),
+            lambda: self.store.update_run_status(run.id, "failed"),
+        )
+        self.assertEqual(len(results), 1)
+        self.assertEqual(len(errors), 1)
+        self.assertIsInstance(errors[0], InvalidTransition)
+        self.assertIn(self.store.get_run(run.id).status.value, ("done", "failed"))
+
+    def test_duplicate_create_run_raises_and_keeps_original(self):
+        run = self.store.create_run(Run(user_id=USER))
+        self.store.update_run_status(run.id, "done")
+        dup = Run(user_id=USER)
+        dup.id = run.id
+        with self.assertRaises(DemoError):
+            self.store.create_run(dup)
+        # 原 run 未被「复活」：仍为 done
+        self.assertEqual(self.store.get_run(run.id).status.value, "done")
+
+    def test_decide_memory_on_active_raises(self):
+        item = self.store.add_memory(
+            MemoryItem(user_id=USER, content="推测一条", level="inference",
+                       status="pending")
+        )
+        self.store.decide_memory(item.id, approved=True)
+        self.assertEqual(self.store.get_memory(item.id).status, "active")
+        with self.assertRaises(InvalidTransition):
+            self.store.decide_memory(item.id, approved=False)
+        self.assertEqual(self.store.get_memory(item.id).status, "active")
+
+    def test_concurrent_add_run_event_seqs_unique(self):
+        run = self.store.create_run(Run(user_id=USER))
+
+        def add_five():
+            for _ in range(5):
+                self.store.add_run_event(RunEvent(run_id=run.id, type="step_done"))
+            return True
+
+        results, errors = self._run_pair(add_five, add_five)
+        self.assertEqual(errors, [])
+        self.assertEqual(len(results), 2)
+        seqs = [e.seq for e in self.store.list_run_events(run.id)]
+        self.assertEqual(seqs, list(range(1, 11)))
 
 
 class TestRunStateMachine(unittest.TestCase):
@@ -319,6 +412,8 @@ class TestExecution(unittest.TestCase):
         self.assertIsNotNone(self.orch.board.read("b"))
 
     def test_route_primitive(self):
+        # 正路：工具结果是 dict、经 save_as 存入事实板，route 用点路径
+        # probe.which 读字段选路（与 ${key.field} 插值同一解析口径）。
         calls = {"n": 0}
 
         def caller(name, args):
@@ -333,9 +428,10 @@ class TestExecution(unittest.TestCase):
                 "default": tool_step("probe", {}, save_as="branch_safe"),
             }),
         ])
-        # route 读的是事实值本身；probe.which 经 save_as 存整结果，需用 ${} 不在此测
-        events = list(orch.run_plan(plan, {"facts": {"probe.which": "x"}}))
-        self.assertIn("run_done", _types(events))  # default 分支可达即可
+        events = list(orch.run_plan(plan, {}))
+        self.assertEqual(_types(events)[-1], "run_done")
+        self.assertIsNotNone(orch.board.read("branch_risky"))  # 按字段值选 risky 支
+        self.assertIsNone(orch.board.read("branch_safe"))
 
     def test_route_by_fact_value(self):
         orch = Orchestrator(tool_call=lambda n, a: {"ok": n, "cost_usd": 0.0})
@@ -429,6 +525,102 @@ class TestExecution(unittest.TestCase):
         events3 = list(orch.run_plan(plan, {"run_id": "ra"}, resume_from=1))
         self.assertEqual(_types(events3)[-1], "run_done")
 
+    def test_write_tool_without_flag_is_gated_by_risk(self):
+        # 统一审批门：dex.sim_swap 是 write 级——计划没标 needs_approval
+        # 也必须停在审批，不许直执行（修评审：只信 Step 标记的旧行为）。
+        calls: list[str] = []
+
+        def caller(name, args):
+            calls.append(name)
+            return self.registry.call(name, args)
+
+        orch = Orchestrator(tool_call=caller)
+        plan = Plan(steps=[
+            tool_step("dex.sim_swap", {"token": "SOL", "amount_usd": 10},
+                      save_as="swap"),  # 注意：未标 needs_approval
+        ])
+        events = list(orch.run_plan(plan, {"run_id": "gate1"}))
+        self.assertEqual(_types(events)[-1], "approval_required")
+        self.assertEqual(calls, [])  # 工具根本没被调用
+        self.assertIsNone(orch.board.read("swap"))
+        # 批准后以 approved 形式续跑才真正执行
+        events2 = list(orch.run_plan(plan, {"run_id": "gate1"},
+                                     resume_from={"approved": ["0"]}))
+        self.assertEqual(_types(events2)[-1], "run_done")
+        self.assertEqual(calls, ["dex.sim_swap"])
+
+    def test_irreversible_tool_gated_via_injected_risks(self):
+        # 注入的风险表同样生效：irreversible 未批必挂起。
+        calls: list[str] = []
+        orch = Orchestrator(
+            tool_call=lambda n, a: calls.append(n) or {"ok": n, "cost_usd": 0.0},
+            tool_risks={"x.burn": "irreversible", "x.read": "read"},
+        )
+        plan = Plan(steps=[
+            tool_step("x.read", {}, save_as="r"),
+            tool_step("x.burn", {}, save_as="b"),
+            tool_step("x.read", {}, save_as="after"),
+        ])
+        events = list(orch.run_plan(plan, {}))
+        self.assertEqual(_types(events)[-1], "approval_required")
+        self.assertEqual(calls, ["x.read"])  # burn 与其后步骤都没执行
+
+    def test_parallel_suspends_whole_run(self):
+        # parallel 分支内有 write 步待审批：整个 run 挂起（不降格为隔离失败），
+        # parallel 不产 step_done、后续顶层步不执行、run 非 done。
+        calls: list[str] = []
+
+        def caller(name, args):
+            calls.append(name)
+            return self.registry.call(name, args)
+
+        orch = Orchestrator(tool_call=caller)
+        plan = Plan(steps=[
+            parallel_step([
+                tool_step("market.quote", {"symbol": "ETH"}, save_as="q"),
+                tool_step("dex.sim_swap", {"token": "SOL", "amount_usd": 10},
+                          save_as="swap"),  # write，未标审批、未获批
+            ]),
+            tool_step("market.quote", {"symbol": "BTC"}, save_as="after"),
+        ])
+        events = list(orch.run_plan(plan, {"run_id": "par1"}))
+        types = _types(events)
+        self.assertIn("approval_required", types)
+        self.assertNotIn("run_done", types)
+        self.assertEqual(types[-1], "approval_required")
+        self.assertNotIn("dex.sim_swap", calls)  # 写工具没执行
+        self.assertEqual(calls, ["market.quote"])  # 只有已跑分支的读工具
+        self.assertIsNone(orch.board.read("after"))  # 后续步未执行
+        # 分支事件 seq 由主通道统一编号：从 1 连续递增、无 0
+        seqs = [e.seq for e in events]
+        self.assertEqual(seqs, list(range(1, len(events) + 1)))
+
+    def test_resume_does_not_rerun_completed_steps(self):
+        # resume 契约：{"approved": [...]} / set 形式中已批准步之前视为已完成，
+        # 续跑不重跑、不重复计费（修评审：旧实现 start=0 整表重演）。
+        for resume in ({"approved": ["1"]}, ["1"], {"1"}):
+            calls: list[str] = []
+
+            def caller(name, args):
+                calls.append(name)
+                return {"ok": name,
+                        "cost_usd": 0.1 if name == "a.read" else 0.2}
+
+            orch = Orchestrator(tool_call=caller)
+            plan = Plan(steps=[
+                tool_step("a.read", {}, save_as="a"),
+                tool_step("b.write", {}, save_as="b", needs_approval=True),
+            ])
+            first = list(orch.run_plan(plan, {"run_id": "rr"}))
+            self.assertEqual(_types(first)[-1], "approval_required")
+            self.assertEqual(calls, ["a.read"])
+            calls.clear()
+            resumed = list(orch.run_plan(plan, {"run_id": "rr"}, resume_from=resume))
+            self.assertEqual(_types(resumed)[-1], "run_done")
+            self.assertEqual(calls, ["b.write"])  # a.read 没被重跑
+            # 本次续跑只计 b.write 的钱（a.read 的 0.1 不重复计）
+            self.assertEqual(resumed[-1].payload["spent_usd"], 0.2)
+
     def test_budget_hard_stop(self):
         policy = GuardrailPolicy(max_cost_per_run_usd=0.0025)
         orch = Orchestrator(tool_call=self.registry.call, policy=policy)
@@ -462,6 +654,30 @@ class TestLLM(unittest.TestCase):
         self.assertEqual(tools_used, ["meme.scan", "dex.quote", "dex.sim_swap"])
         self.assertTrue(plan.steps[-1].needs_approval)
         self.assertEqual(plan.steps[1].args["amount_usd"], 200.0)
+
+    def test_mock_complete_aave_intent_wins_over_token(self):
+        # 「查 AAVE 利率」：AAVE 是已知 token，但意图是 Aave——必须走 Aave
+        # 分支而不是 meme 话术（修评审：complete 分支顺序）。
+        reply = MockModel().complete([{"role": "user", "content": "查 AAVE 利率"}])
+        self.assertIn("Aave 各资产利率", reply)
+        self.assertNotIn("已定位标的", reply)
+
+    def test_mock_plan_amount_defaulted_is_flagged(self):
+        mock = MockModel()
+        plan = mock.plan("script_build", "买 BONK")  # 没写金额 -> 默认 100
+        self.assertTrue(plan.metadata["amount_defaulted"])
+        self.assertEqual(plan.steps[1].args["amount_usd"], 100.0)
+        plan2 = mock.plan("script_build", "买 BONK 200 美元")
+        self.assertFalse(plan2.metadata["amount_defaulted"])
+
+    def test_openrouter_plan_rejects_unknown_tool(self):
+        # plan 入境白名单：模型编造的未知工具名直接报错，不进执行层。
+        model = OpenRouterModel(api_key="sk-test")
+        model.complete = lambda messages: (  # type: ignore[method-assign]
+            '{"steps": [{"tool": "shell.exec", "args": {}}]}'
+        )
+        with self.assertRaises(DemoError):
+            model.plan("chat", "随便做点什么")
 
     def test_openrouter_missing_key_raises_with_guidance(self):
         model = OpenRouterModel(api_key="")
@@ -514,6 +730,138 @@ class TestRuntime(unittest.TestCase):
             with self.assertRaises(RuntimeNotConfigured):
                 list(runtime.invoke("s", "hi", {}))
             self.assertIn("AGENTCORE_RUNTIME_ARN", health["hint"])
+
+
+class _ConditionRegistry:
+    """condition 测试用假注册表：market.quote 返回可变 price_usd。"""
+
+    def __init__(self):
+        self.value = 0.0
+
+    def call(self, tool, args, mode="simulate"):
+        return {"price_usd": self.value}
+
+
+class TestFeedAndSchedulerFixes(unittest.TestCase):
+    """评审修复回归：feed id 稳定/fallback 打标、scheduler 输入保险/边沿/节流。"""
+
+    def setUp(self):
+        self.store = SqliteStore(":memory:")
+
+    def tearDown(self):
+        self.store.close()
+
+    # ① every_minutes 非法值：next_fire 不挂死（钳制），validate_trigger 判非法
+    def test_next_fire_invalid_every_minutes_never_hangs(self):
+        from datetime import datetime
+
+        from muse_me.scheduler import next_fire, validate_trigger
+        now = datetime.now().astimezone()
+        for bad in (-5, 0):
+            job = Job(user_id=USER, name="坏间隔", script_id="s1",
+                      trigger_type="time", trigger_spec={"every_minutes": bad})
+            self.assertIsNotNone(validate_trigger(job))
+            nxt = next_fire(job, now)  # 旧实现对负数会死循环；能返回即证明已钳制
+            self.assertTrue(nxt)
+            from muse_me.scheduler import parse_iso
+            self.assertGreater(parse_iso(nxt), now)
+
+    # ② cron_daily 非法：tick 后 job 被禁用、只通知一次、不产生 JobRun
+    def test_invalid_cron_daily_disables_job_notifies_once_no_jobrun(self):
+        from muse_me.scheduler import SchedulerDaemon
+        job = self.store.create_job(Job(
+            user_id=USER, name="坏定点", script_id="s1", trigger_type="time",
+            trigger_spec={"cron_daily": "25:99"}, next_fire_at=""))
+        daemon = SchedulerDaemon(self.store, lambda j, p, e: {"status": "done"},
+                                 ToolRegistry(), user_id=USER, retry_backoff=0)
+        daemon.tick()
+        daemon.tick()
+        saved = self.store.get_job(job.id)
+        self.assertFalse(saved.enabled)
+        self.assertEqual(self.store.list_job_runs(job.id), [])
+        notes = [n for n in self.store.list_notifications(USER)
+                 if "已自动停用" in n.title]
+        self.assertEqual(len(notes), 1)
+
+    # ③ 同一新闻两次 generate 的 id 相同（内容哈希 id）
+    def test_feed_item_ids_stable_across_regenerations(self):
+        from muse_me.feed import FeedGenerator
+        gen = FeedGenerator(self.store)
+        first = gen.generate(USER, "关注 meme 和 defi")
+        second = gen.generate(USER, "关注 meme 和 defi")
+        self.assertEqual([i.id for i in first], [i.id for i in second])
+        self.assertTrue(all(len(i.id) == 32 for i in first))
+
+    # ⑤ 零命中回退带 fallback 标记（属性 + entities，entities 经 API 透出）
+    def test_feed_fallback_marks_items(self):
+        from muse_me.feed import FeedGenerator
+        gen = FeedGenerator(self.store)
+        items = gen.generate(USER, "量子计算与火星移民的最新进展")
+        self.assertTrue(items)  # 不空窗
+        self.assertTrue(all(getattr(i, "fallback", False) for i in items))
+        self.assertTrue(all(i.entities.get("fallback") for i in items))
+        stored = self.store.list_feed_items(USER, limit=50)
+        self.assertTrue(all(i.entities.get("fallback") for i in stored))
+
+    # ④ condition 边沿：假→真触发一次，持续真不重复，变假再变真再触发一次；
+    #    且首次评估（基线）不触发
+    def test_condition_edge_trigger_and_baseline(self):
+        from datetime import datetime, timedelta
+
+        from muse_me.scheduler import SchedulerDaemon
+        registry = _ConditionRegistry()
+        calls = []
+
+        def runner(job, params, entity):
+            calls.append(1)
+            return {"run_id": "r1", "status": "done"}
+
+        job = self.store.create_job(Job(
+            user_id=USER, name="价格条件", script_id="s1",
+            trigger_type="condition",
+            trigger_spec={"metric": "TEST", "op": ">=", "threshold": 100}))
+        daemon = SchedulerDaemon(self.store, runner, registry, user_id=USER,
+                                 retry_backoff=0, condition_cooldown_seconds=0)
+        base = datetime.now().astimezone()
+        registry.value = 150.0
+        daemon.tick(base)  # 首次评估=基线：即使为真也不触发
+        self.assertEqual(len(calls), 0)
+        registry.value = 0.0
+        daemon.tick(base + timedelta(minutes=1))  # 真→假
+        registry.value = 150.0
+        daemon.tick(base + timedelta(minutes=2))  # 假→真：触发 1
+        daemon.tick(base + timedelta(minutes=3))  # 持续真：不重复
+        self.assertEqual(len(calls), 1)
+        registry.value = 0.0
+        daemon.tick(base + timedelta(minutes=4))
+        registry.value = 200.0
+        daemon.tick(base + timedelta(minutes=5))  # 再变真：触发 2
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(self.store.list_job_runs(job.id)), 2)
+
+    # 附加：tick 失败记录节流（同 job 同错误 60 秒内只记一条）
+    def test_tick_failure_records_throttled(self):
+        from datetime import datetime, timedelta
+
+        from muse_me.scheduler import SchedulerDaemon
+
+        class BoomRegistry:
+            def call(self, tool, args, mode="simulate"):
+                raise RuntimeError("工具炸了")
+
+        job = self.store.create_job(Job(
+            user_id=USER, name="坏条件", script_id="s1",
+            trigger_type="condition",
+            trigger_spec={"metric": "TEST", "op": ">=", "threshold": 1}))
+        daemon = SchedulerDaemon(self.store, lambda j, p, e: {"status": "done"},
+                                 BoomRegistry(), user_id=USER, retry_backoff=0)
+        base = datetime.now().astimezone()
+        daemon.tick(base)
+        daemon.tick(base + timedelta(seconds=10))
+        daemon.tick(base + timedelta(seconds=20))
+        runs = self.store.list_job_runs(job.id)
+        self.assertEqual(len(runs), 1)
+        self.assertEqual(runs[0].status, "failed")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,1 @@
+{"description":"精选条目 id 由内容决定：连续两次刷新后同一标题的 id 必须不变，否则 scheduler 的 event 基线会把刷新后的旧新闻全当新条目误触发","expect":{"min_items":1,"stable_across_refresh":true},"id":"case-07-feed-stable-ids","input":{},"kind":"feed_stable_ids"}

@@ -31,10 +31,14 @@ from .domain import (
     ScriptVersion,
     validate_transition,
 )
-from .errors import NotFound
+from .errors import DemoError, InvalidTransition, NotFound, ValidationFailed
 
 SCHEMA_VERSION = 1
 
+# 注意：SCHEMA_SQL 全部是 CREATE TABLE IF NOT EXISTS，只对新建库生效；
+# 已存在的旧库不会被迁移（缺 UNIQUE/FK 的旧表保持旧结构），需要迁移时另行处理。
+# run_events/approvals 的 FOREIGN KEY 指向 runs：SqliteStore 连接时开
+# PRAGMA foreign_keys=ON 使其真实生效（仅新库的表结构带 FK）。
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS schema_meta (
     key TEXT PRIMARY KEY,
@@ -82,7 +86,9 @@ CREATE TABLE IF NOT EXISTS run_events (
     seq INTEGER NOT NULL DEFAULT 0,
     type TEXT NOT NULL,
     payload TEXT NOT NULL DEFAULT '{}',
-    created_at TEXT NOT NULL DEFAULT ''
+    created_at TEXT NOT NULL DEFAULT '',
+    UNIQUE(run_id, seq),
+    FOREIGN KEY(run_id) REFERENCES runs(id)
 );
 CREATE INDEX IF NOT EXISTS idx_run_events_run ON run_events(run_id, seq);
 CREATE TABLE IF NOT EXISTS approvals (
@@ -95,7 +101,8 @@ CREATE TABLE IF NOT EXISTS approvals (
     status TEXT NOT NULL DEFAULT 'pending',
     reason TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL DEFAULT '',
-    decided_at TEXT NOT NULL DEFAULT ''
+    decided_at TEXT NOT NULL DEFAULT '',
+    FOREIGN KEY(run_id) REFERENCES runs(id)
 );
 CREATE TABLE IF NOT EXISTS memories (
     id TEXT PRIMARY KEY,
@@ -235,6 +242,7 @@ class SqliteStore:
         self._lock = threading.RLock()
         self.conn = sqlite3.connect(path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
+        self.conn.execute("PRAGMA foreign_keys=ON")
         init_schema(self.conn)
 
     def close(self) -> None:
@@ -246,6 +254,14 @@ class SqliteStore:
             cur = self.conn.execute(sql, params)
             self.conn.commit()
             return cur
+
+    def _exec_t(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
+        """带异常转译的 _exec：sqlite 约束错误在存储边界收口为 DemoError 族，
+        不让原生 sqlite3.IntegrityError 逸出到 API 层。"""
+        try:
+            return self._exec(sql, params)
+        except sqlite3.IntegrityError as exc:
+            raise ValidationFailed(f"存储约束冲突：{exc}") from exc
 
     def _one(self, sql: str, params: tuple = ()) -> sqlite3.Row | None:
         with self._lock:
@@ -302,8 +318,10 @@ class SqliteStore:
 
     # ---------------- runs / run_events ----------------
     def create_run(self, run: Run) -> Run:
-        self._exec(
-            "INSERT OR REPLACE INTO runs(id,user_id,chat_id,script_id,job_id,scene,source,status,"
+        # 普通 INSERT（不用 OR REPLACE）：同 id 重复 create 直接报错，
+        # 杜绝用新对象覆写已终态 run 的「复活」路径；冲突经 _exec_t 转译。
+        self._exec_t(
+            "INSERT INTO runs(id,user_id,chat_id,script_id,job_id,scene,source,status,"
             "cost_usd,tokens,harness_version,error,created_at,updated_at)"
             " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (run.id, run.user_id, run.chat_id, run.script_id, run.job_id, run.scene,
@@ -337,12 +355,23 @@ class SqliteStore:
         run = self.get_run(run_id)
         if run is None:
             raise NotFound(f"run 不存在：{run_id}")
+        previous = run.status
         run.transition_to(status)  # 非法迁移抛 InvalidTransition
-        self._exec(
-            "UPDATE runs SET status=?, updated_at=? WHERE id=?",
-            (run.status.value, _now(), run_id),
+        now = _now()
+        # 带前置状态条件的单条 UPDATE：并发下只有先到者能改，rowcount=0 即已被改动
+        cur = self._exec(
+            "UPDATE runs SET status=?, updated_at=? WHERE id=? AND status=?",
+            (run.status.value, now, run_id, previous.value),
         )
-        run.updated_at = _now()
+        if cur.rowcount == 0:
+            fresh = self.get_run(run_id)
+            if fresh is None:
+                raise NotFound(f"run 不存在：{run_id}")
+            raise InvalidTransition(
+                f"Run 状态已被并发修改（当前 {fresh.status.value}），"
+                f"无法迁移到 {run.status.value}：{run_id}"
+            )
+        run.updated_at = now
         return run
 
     def set_run_error(self, run_id: str, error: str) -> None:
@@ -355,18 +384,21 @@ class SqliteStore:
         )
 
     def add_run_event(self, event: RunEvent) -> RunEvent:
-        if event.seq <= 0:
-            row = self._one(
-                "SELECT COALESCE(MAX(seq),0) AS m FROM run_events WHERE run_id=?",
-                (event.run_id,),
+        # MAX(seq) 分配与插入在同一把类级锁内全程完成，消除本进程内的 seq 竞态；
+        # UNIQUE(run_id, seq) 是第二道防线，冲突经 _exec_t 转译为 DemoError 族。
+        with self._lock:
+            if event.seq <= 0:
+                row = self._one(
+                    "SELECT COALESCE(MAX(seq),0) AS m FROM run_events WHERE run_id=?",
+                    (event.run_id,),
+                )
+                event.seq = int(row["m"]) + 1
+            self._exec_t(
+                "INSERT INTO run_events(id,run_id,seq,type,payload,created_at)"
+                " VALUES(?,?,?,?,?,?)",
+                (event.id, event.run_id, event.seq, event.type, _j(event.payload),
+                 event.created_at),
             )
-            event.seq = int(row["m"]) + 1
-        self._exec(
-            "INSERT OR REPLACE INTO run_events(id,run_id,seq,type,payload,created_at)"
-            " VALUES(?,?,?,?,?,?)",
-            (event.id, event.run_id, event.seq, event.type, _j(event.payload),
-             event.created_at),
-        )
         return event
 
     def list_run_events(self, run_id: str) -> list[RunEvent]:
@@ -381,8 +413,10 @@ class SqliteStore:
 
     # ---------------- approvals ----------------
     def create_approval(self, approval: Approval) -> Approval:
-        self._exec(
-            "INSERT OR REPLACE INTO approvals(id,run_id,step_index,action,risk,amount_usd,"
+        # 普通 INSERT（同 create_run）：同 id 重复 create 报错，
+        # 杜绝把已决策 approval 覆写回 pending。
+        self._exec_t(
+            "INSERT INTO approvals(id,run_id,step_index,action,risk,amount_usd,"
             "status,reason,created_at,decided_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
             (approval.id, approval.run_id, approval.step_index, approval.action,
              approval.risk, approval.amount_usd, approval.status.value,
@@ -432,25 +466,29 @@ class SqliteStore:
     def decide_approval(
         self, approval_id: str, decision: str, reason: str = ""
     ) -> Approval:
+        if decision not in ("approved", "denied"):
+            raise DemoError(f"非法 decision：{decision}")
         approval = self.get_approval(approval_id)
         if approval is None:
             raise NotFound(f"approval 不存在：{approval_id}")
-        return self._decide_approval(approval, decision, reason)
-
-    def _decide_approval(self, approval: Approval, decision: str, reason: str) -> Approval:
-        from .errors import DemoError
-
-        if approval.status != ApprovalStatus.PENDING:
-            raise DemoError(f"approval 已决策，不可重复决策：{approval.id}")
-        if decision not in ("approved", "denied"):
-            raise DemoError(f"非法 decision：{decision}")
+        decided_at = _now()
+        # 带 pending 前置条件的单条 UPDATE：并发决策只有先到者成功，
+        # 后到者 rowcount=0 → InvalidTransition，不再是读-判-写的非原子序列。
+        cur = self._exec(
+            "UPDATE approvals SET status=?, reason=?, decided_at=?"
+            " WHERE id=? AND status='pending'",
+            (decision, reason, decided_at, approval_id),
+        )
+        if cur.rowcount == 0:
+            fresh = self.get_approval(approval_id)
+            if fresh is None:
+                raise NotFound(f"approval 不存在：{approval_id}")
+            raise InvalidTransition(
+                f"approval 已决策，不可重复决策：{approval_id}"
+            )
         approval.status = ApprovalStatus(decision)
         approval.reason = reason
-        approval.decided_at = _now()
-        self._exec(
-            "UPDATE approvals SET status=?, reason=?, decided_at=? WHERE id=?",
-            (approval.status.value, reason, approval.decided_at, approval.id),
-        )
+        approval.decided_at = decided_at
         return approval
 
     # ---------------- memories ----------------
@@ -493,12 +531,23 @@ class SqliteStore:
         item = self.get_memory(memory_id)
         if item is None:
             raise NotFound(f"memory 不存在：{memory_id}")
-        item.status = (
+        new_status = (
             MemoryStatus.ACTIVE.value if approved else MemoryStatus.REJECTED.value
         )
-        self._exec(
-            "UPDATE memories SET status=? WHERE id=?", (item.status, memory_id)
+        # 只允许从 pending 决策一次：带前置条件的单条 UPDATE，
+        # 已 active/rejected 的记录再决策 → rowcount=0 → InvalidTransition。
+        cur = self._exec(
+            "UPDATE memories SET status=? WHERE id=? AND status='pending'",
+            (new_status, memory_id),
         )
+        if cur.rowcount == 0:
+            fresh = self.get_memory(memory_id)
+            if fresh is None:
+                raise NotFound(f"memory 不存在：{memory_id}")
+            raise InvalidTransition(
+                f"memory 已决策（当前状态 {fresh.status}），不可重复决策：{memory_id}"
+            )
+        item.status = new_status
         return item
 
     def delete_memory(self, memory_id: str) -> bool:
@@ -696,13 +745,16 @@ class SqliteStore:
         return self._prompt(row) if row else None
 
     def set_prompt(self, user_id: str, key: str, content: str) -> PromptDoc:
-        current = self.get_prompt(user_id, key)
-        version = (current.version + 1) if current else 1
-        doc = PromptDoc(user_id=user_id, key=key, content=content, version=version)
-        self._exec(
-            "INSERT INTO prompts(id,user_id,key,version,content,created_at) VALUES(?,?,?,?,?,?)",
-            (doc.id, user_id, key, version, content, doc.created_at),
-        )
+        # 读当前版本与插入新版本在同一把类级锁内全程完成，消除并发同号版本竞态；
+        # 万一仍冲突，UNIQUE(user_id, key, version) + _exec_t 转译兜底。
+        with self._lock:
+            current = self.get_prompt(user_id, key)
+            version = (current.version + 1) if current else 1
+            doc = PromptDoc(user_id=user_id, key=key, content=content, version=version)
+            self._exec_t(
+                "INSERT INTO prompts(id,user_id,key,version,content,created_at) VALUES(?,?,?,?,?,?)",
+                (doc.id, user_id, key, version, content, doc.created_at),
+            )
         return doc
 
     def list_prompt_versions(self, user_id: str, key: str) -> list[PromptDoc]:

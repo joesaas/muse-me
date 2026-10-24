@@ -6,12 +6,21 @@
   step_done / step_failed / reflect_failed / run_done / run_failed。
 - 预算硬顶：累计 cost（工具结果的 cost_usd 或 Step.cost_usd）超
   GuardrailPolicy.max_cost_per_run_usd 时立即停 Run，落 run_failed(reason=budget)。
-- 审批挂起：Step.needs_approval 且未获批时产 approval_required 并停止迭代；
+- 审批挂起（统一审批门）：不只信 Step.needs_approval——每个 tool 步执行前
+  按工具注册表风险级查 GuardrailPolicy.action_for_risk，write/irreversible
+  且处置非 auto、且本步未获批时一律产 approval_required 并停止迭代；
+  needs_approval 标记对任意原语步仍生效（显式标记优先于风险推断）。
   外部审批通过后以 run_plan(plan, ctx, resume_from=...) 续跑——resume_from 支持：
     * int：从该顶层步序开始跑（此前步视为已完成且已批准）；
-    * dict：{"start_index": int, "approved": [步路径,...]}；
-    * set/list：已批准的步路径集合（如 "2"、"1.0"）。
+    * dict：{"start_index": int, "approved": [步路径,...]}；无 start_index 时
+      与 set/list 同语义（见下）；
+    * set/list：已批准的步路径集合（如 "2"、"1.0"）。语义：最早的已批准
+      顶层步之前各步视为**已完成**，续跑从该步开始、已批准步照常执行——
+      已完成步不重跑、不重复计费（与 int 形式对齐）。
   步路径 = 以 "." 连接的层级序号，顶层即步序本身。
+- parallel 原语：分支**串行**执行（分支体是同步生成器，逐个跑完）、单分支
+  失败隔离；但分支内出现审批挂起时不隔离——整个 parallel 挂起、上抛，
+  run 停在 awaiting_approval，后续步不执行。
 """
 from __future__ import annotations
 
@@ -135,14 +144,56 @@ class Orchestrator:
         tool_call: ToolCaller,
         policy: GuardrailPolicy | None = None,
         board: FactBoard | None = None,
+        tool_risks: Any = None,
+        registry: Any = None,
     ):
+        """tool_risks / registry：统一审批门的工具风险级来源（可选注入）。
+
+        - tool_risks：dict[str, str]（工具名->风险级）或 callable(name)->str|None；
+        - registry：带 get_tool(name)->AtomicTool|None 的注册表（如 ToolRegistry）；
+        - 都不给时惰性查 tools.TOOLS 默认注册表（与默认 tool_call 同源）。
+        风险级查不到的工具名不做风险门控（其命名空间由调用方自管；真实计划的
+        白名单校验在 llm.plan 入境处完成），已知 write/irreversible 必过门。
+        """
         self._tool_call = tool_call
         self._policy = policy or GuardrailPolicy()
         self._board = board or FactBoard()
+        self._tool_risks = tool_risks
+        self._registry = registry
 
     @property
     def board(self) -> FactBoard:
         return self._board
+
+    def _risk_of(self, tool_name: str | None) -> str | None:
+        """查工具风险级；来源优先级：tool_risks > registry > 默认 TOOLS。"""
+        if not tool_name:
+            return None
+        src = self._tool_risks
+        if src is not None:
+            if callable(src):
+                return src(tool_name)
+            if isinstance(src, dict):
+                return src.get(tool_name)
+        if self._registry is not None:
+            tool = self._registry.get_tool(tool_name)
+            return tool.risk if tool is not None else None
+        from .tools import TOOLS
+
+        tool = TOOLS.get(tool_name)
+        return tool.risk if tool is not None else None
+
+    def _approval_required(self, step: Step, path: str, approved: set[str]) -> bool:
+        """统一审批门：显式标记，或 write/irreversible 工具的风险处置非 auto。"""
+        if path in approved:
+            return False
+        if step.needs_approval:
+            return True
+        if step.kind == "tool":
+            risk = self._risk_of(step.tool)
+            if risk in ("write", "irreversible"):
+                return self._policy.action_for_risk(risk) != "auto"
+        return False
 
     # ---------------- 入口 ----------------
     def run_plan(
@@ -189,20 +240,35 @@ class Orchestrator:
                                 "facts": list(board.snapshot().keys())})
 
     @staticmethod
-    def _parse_resume(resume_from: Any) -> tuple[int, set[str]]:
+    def _top_index(path: str) -> int | None:
+        head = str(path).split(".", 1)[0]
+        return int(head) if head.isdigit() else None
+
+    @classmethod
+    def _resume_start(cls, approved: set[str]) -> int:
+        """无显式 start_index 时的续跑起点：最早已批准顶层步（其前视为已完成）。"""
+        tops = [t for t in (cls._top_index(p) for p in approved) if t is not None]
+        return min(tops) if tops else 0
+
+    @classmethod
+    def _parse_resume(cls, resume_from: Any) -> tuple[int, set[str]]:
         if resume_from is None:
             return 0, set()
         if isinstance(resume_from, int):
             # 从该步续跑 == 该步（含此前各步）的审批已通过
             return resume_from, {str(i) for i in range(resume_from + 1)}
         if isinstance(resume_from, dict):
-            start = int(resume_from.get("start_index", 0))
             approved = {str(p) for p in resume_from.get("approved", [])}
             if "start_index" in resume_from:
+                start = int(resume_from["start_index"])
                 approved |= {str(i) for i in range(start + 1)}
-            return start, approved
+                return start, approved
+            # 无 start_index：与 set/list 同语义——已批准步之前视为已完成，
+            # 不重跑、不重复计费（修评审：旧实现 start=0 会整表重演）。
+            return cls._resume_start(approved), approved
         if isinstance(resume_from, (set, list, tuple)):
-            return 0, {str(p) for p in resume_from}
+            approved = {str(p) for p in resume_from}
+            return cls._resume_start(approved), approved
         raise DemoError(f"非法 resume_from：{type(resume_from)}")
 
     # ---------------- 成本记账 ----------------
@@ -213,7 +279,7 @@ class Orchestrator:
 
     # ---------------- 原语分发 ----------------
     def _exec_step(self, step, path, board, emit, state, approved, depth):
-        if step.needs_approval and path not in approved:
+        if self._approval_required(step, path, approved):
             yield emit("approval_required", {"step": path, "label": step.label,
                                              "tool": step.tool})
             raise _Suspended()
@@ -264,7 +330,7 @@ class Orchestrator:
     def _prim_route(self, step, path, board, emit, state, approved, depth):
         yield emit("step_started", {"step": path, "kind": "route",
                                     "condition": step.condition})
-        value = board.read(step.condition)
+        value = self._read_path(board, step.condition)
         chosen = step.routes.get(str(value)) or step.routes.get("default")
         if chosen is None:
             yield emit("step_failed", {"step": path,
@@ -276,18 +342,29 @@ class Orchestrator:
     def _prim_parallel(self, step, path, board, emit, state, approved, depth):
         yield emit("step_started", {"step": path, "kind": "parallel",
                                     "branches": len(step.children)})
-        events, failures = self._run_parallel(step, path, board, state, approved, depth)
+        events, failures, suspended = self._run_parallel(
+            step, path, board, state, approved, depth)
+        # 分支事件统一走主 emit 通道重新编号：seq 与 run_id 与主序一致，
+        # 不再出现 seq=0 的分支事件（修评审）。
         for event in events:
-            yield event
+            yield emit(event.type, event.payload)
+        if suspended:
+            # 审批挂起不隔离：整个 parallel 挂起，run 停在 awaiting_approval，
+            # 不产本步 step_done，后续步不执行（fail-closed）。
+            raise _Suspended()
         if state["spent"] > self._policy.max_cost_per_run_usd:
             raise _BudgetExceeded()
         yield emit("step_done", {"step": path, "kind": "parallel",
                                  "failures": failures})
 
     def _run_parallel(self, step, path, board, state, approved, depth):
-        """asyncio 并发执行各分支；单分支失败隔离，不拖垮其余分支。"""
-        results: dict[int, tuple[list[RunEvent], str | None, dict[str, Any]]] = {}
+        """分支**串行**执行、单分支失败隔离（不拖垮其余分支）。
 
+        名为 parallel、借 asyncio.gather 外壳，但分支体是同步生成器、无
+        await 点，实际逐个跑完——不要按真并发理解（评审已指出，行为不变，
+        注释如实）。审批挂起例外：不隔离，置 suspended 由 _prim_parallel 上抛。
+        返回 (事件列表[未编号], 失败分支数, 是否有分支挂起)。
+        """
         async def run_branch(i: int, child: Step):
             child_events: list[RunEvent] = []
             sub_board = FactBoard(initial=board.snapshot())
@@ -298,15 +375,17 @@ class Orchestrator:
                 return event
 
             error: str | None = None
+            suspended = False
             try:
-                for event in self._exec_step(
+                for _ in self._exec_step(
                     child, f"{path}.{i}", sub_board, collect_emit, state, approved, depth
                 ):
-                    if event not in child_events:
-                        child_events.append(event)
-            except (_StepFailed, _Suspended, _BudgetExceeded) as exc:
+                    pass  # 事件由 collect_emit 收集，驱动迭代即可
+            except _Suspended:
+                suspended = True
+            except (_StepFailed, _BudgetExceeded) as exc:
                 error = str(exc) or exc.__class__.__name__
-            return i, child_events, error, sub_board.snapshot()
+            return i, child_events, error, suspended, sub_board.snapshot()
 
         async def gather_all():
             return await asyncio.gather(
@@ -317,18 +396,20 @@ class Orchestrator:
         gathered = asyncio.run(gather_all())
         merged: list[RunEvent] = []
         failures = 0
-        spent_extra = 0.0
-        for i, child_events, error, snap in gathered:
+        suspended = False
+        for i, child_events, error, branch_suspended, snap in gathered:
             merged.extend(child_events)
             child = step.children[i]
-            if error:
+            if branch_suspended:
+                suspended = True
+            elif error:
                 failures += 1
                 merged.append(RunEvent(run_id="", type="step_failed",
                                        payload={"step": f"{path}.{i}",
                                                 "error": error, "isolated": True}))
             elif child.save_as and child.save_as in snap:
                 board.write(child.save_as, snap[child.save_as])
-        return merged, failures
+        return merged, failures, suspended
 
     def _prim_reflect(self, step, path, board, emit, state, approved, depth):
         if not step.children:
@@ -375,17 +456,28 @@ class Orchestrator:
 
     # ---------------- 参数解析 ----------------
     @staticmethod
-    def _resolve_args(args: dict[str, Any], board: FactBoard) -> dict[str, Any]:
+    def _read_path(board: FactBoard, expr: str) -> Any:
+        """按 key / key.field 点路径读事实板（route 条件与 ${} 插值共用同一口径）。
+
+        首段是事实键，其余段逐级走 dict；中间值非 dict 时返回当前值（与
+        _resolve_args 旧行为一致），缺失段返回 None。
+        """
+        head, _, rest = expr.partition(".")
+        resolved = board.read(head)
+        while rest:
+            if not isinstance(resolved, dict):
+                return resolved
+            head, _, rest = rest.partition(".")
+            resolved = resolved.get(head)
+        return resolved
+
+    @classmethod
+    def _resolve_args(cls, args: dict[str, Any], board: FactBoard) -> dict[str, Any]:
         """只做 ${key} / ${key.field} 两类插值（与脚本 DSL 沙箱口径一致）。"""
         out: dict[str, Any] = {}
         for key, value in args.items():
             if isinstance(value, str) and value.startswith("${") and value.endswith("}"):
-                expr = value[2:-1]
-                head, _, rest = expr.partition(".")
-                resolved = board.read(head)
-                if isinstance(resolved, dict) and rest:
-                    resolved = resolved.get(rest)
-                out[key] = resolved
+                out[key] = cls._read_path(board, value[2:-1])
             else:
                 out[key] = value
         return out
