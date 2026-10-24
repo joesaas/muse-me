@@ -23,7 +23,7 @@ Harness 层
 ```
 
 设计原则见 `docs/architecture.md`（定版），细节见 `docs/detailed-design.md`，
-任务拆分见 `docs/task-breakdown.md`。
+任务拆分见 `docs/task-breakdown.md`，部署见根目录 `DEPLOYMENT.md`。
 
 ## 启动
 
