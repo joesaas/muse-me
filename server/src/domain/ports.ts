@@ -57,6 +57,11 @@ export interface ApprovalStore {
    * 返回 true 表示本次决策生效；false 表示已被决策过或不存在（由服务层再分型）。
    */
   decideApproval(id: string, decision: "approved" | "denied", reason: string): boolean;
+  /**
+   * 超时过期：仅当当前 status='pending' 时置 rejected（同上原子口径）。
+   * 返回 true 表示本次过期生效；false 表示已被决策过或不存在。
+   */
+  expireApproval(id: string, reason: string): boolean;
 }
 
 /** 会话存储小接口：登录 token 的签发/校验与存储介质解耦。 */

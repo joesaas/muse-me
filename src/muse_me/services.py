@@ -27,9 +27,16 @@ from .domain import (
     RunStatus,
     Script,
 )
-from .errors import GuardrailDenied, InvalidTransition, NotFound, ValidationFailed
+from .errors import (
+    ApprovalExpired,
+    GuardrailDenied,
+    InvalidTransition,
+    NotFound,
+    ValidationFailed,
+)
 from .execution import Orchestrator
 from .feed import FeedGenerator
+from .ports import StorePort
 from .scheduler import next_fire
 
 DEFAULT_USER = "demo-user"
@@ -39,7 +46,7 @@ DEFAULT_USER = "demo-user"
 class ChatService:
     def __init__(
         self,
-        store: Any,
+        store: StorePort,
         runtime: Any,
         model: Any,
         registry: Any,
@@ -280,6 +287,8 @@ class ChatService:
 class ApprovalService:
     def __init__(
         self,
+        # 保持 Any：本服务还调用 StorePort 之外的 expire_approval，
+        # 标注 StorePort 会掩盖这一额外依赖（见批次三报告）。
         store: Any,
         registry: Any,
         policy: Any,
@@ -298,12 +307,71 @@ class ApprovalService:
     def list(self, status: str | None = None) -> list[Approval]:
         return self._store.list_approvals(self._user_id, status=status)
 
+    # ---------------- 审批超时 ----------------
+    def _approval_age_minutes(self, approval: Approval, now) -> float:
+        """审批已等待分钟数；created_at 解析失败时视为已过期（从严）。"""
+        from datetime import datetime
+
+        raw = approval.created_at or ""
+        try:
+            created = datetime.strptime(raw, "%Y-%m-%dT%H:%M:%S%z")
+        except ValueError:
+            try:
+                created = datetime.fromisoformat(raw)
+            except ValueError:
+                return float("inf")
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=now.tzinfo)
+        return (now - created).total_seconds() / 60.0
+
+    def _is_expired(self, approval: Approval, now) -> bool:
+        timeout = getattr(self._policy, "approval_timeout_minutes", 60)
+        return self._approval_age_minutes(approval, now) > timeout
+
+    def _expire_one(self, approval: Approval) -> Approval | None:
+        """把一条 pending 审批置 rejected 并把对应 run 收口 failed。
+
+        返回过期后的审批；已被抢先决策时返回 None。
+        """
+        expired = self._store.expire_approval(approval.id, "approval_timeout")
+        if expired is None:
+            return None
+        run = self._store.get_run(approval.run_id)
+        if run is not None and run.status == RunStatus.AWAITING_APPROVAL:
+            self._store.add_run_event(RunEvent(
+                run_id=run.id, type="run_failed",
+                payload={"reason": "approval_timeout",
+                         "error": "审批已过期"}))
+            self._store.set_run_error(run.id, "审批已过期")
+            self._store.update_run_status(run.id, RunStatus.FAILED)
+        return expired
+
+    def expire_stale(self, now=None) -> list[Approval]:
+        """清扫过期 pending 审批（供调度 tick 调用）：逐条过期并收口 run。"""
+        from datetime import datetime
+
+        moment = now or datetime.now().astimezone()
+        expired: list[Approval] = []
+        for approval in self._store.list_approvals(
+                self._user_id, status="pending"):
+            if self._is_expired(approval, moment):
+                done = self._expire_one(approval)
+                if done is not None:
+                    expired.append(done)
+        return expired
+
     def decide(
         self, approval_id: str, approved: bool, reason: str = ""
     ) -> Approval:
+        from datetime import datetime
+
         approval = self._store.get_approval(approval_id)
         if approval is None:
             raise NotFound(f"审批不存在：{approval_id}")
+        if approval.status == "pending" and self._is_expired(
+                approval, datetime.now().astimezone()):
+            self._expire_one(approval)
+            raise ApprovalExpired("审批已过期")
         decided = self._store.decide_approval(
             approval_id, "approved" if approved else "denied", reason)
         run = self._store.get_run(approval.run_id)
@@ -335,7 +403,7 @@ class ApprovalService:
 class ScriptService:
     def __init__(
         self,
-        store: Any,
+        store: StorePort,
         registry: Any,
         policy: Any,
         *,
@@ -414,7 +482,7 @@ class ScriptService:
 
 # ------------------------------------------------------------------ 定时任务
 class JobService:
-    def __init__(self, store: Any, *, user_id: str = DEFAULT_USER):
+    def __init__(self, store: StorePort, *, user_id: str = DEFAULT_USER):
         self._store = store
         self._user_id = user_id
 
@@ -481,7 +549,7 @@ class JobService:
 class FeedService:
     """封装 feed.FeedGenerator：refresh 按当前提示词重生成，list 读库。"""
 
-    def __init__(self, store: Any, generator: FeedGenerator, *,
+    def __init__(self, store: StorePort, generator: FeedGenerator, *,
                  user_id: str = DEFAULT_USER):
         self._store = store
         self._generator = generator
@@ -505,7 +573,7 @@ class FeedService:
 
 # ------------------------------------------------------------------ 记忆
 class MemoryService:
-    def __init__(self, store: Any, *, user_id: str = DEFAULT_USER):
+    def __init__(self, store: StorePort, *, user_id: str = DEFAULT_USER):
         self._store = store
         self._user_id = user_id
 
@@ -556,7 +624,7 @@ class SettingsService:
 
     def __init__(
         self,
-        store: Any,
+        store: StorePort,
         *,
         user_id: str = DEFAULT_USER,
         model: Any = None,

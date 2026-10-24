@@ -108,7 +108,8 @@ export interface FeedItemRecord {
   url: string;
   topic: string;
   entities: Record<string, unknown>;
-  publishedAt: string;
+  /** 池内无时间时为 null，不编造。 */
+  publishedAt: string | null;
   promptVersion: number | null;
   createdAt: string;
 }
@@ -233,23 +234,45 @@ export interface ChatPlanSnapshot {
   spentUsd: number;
 }
 
-// ---------------- 护栏策略（与 Python domain.GuardrailPolicy 默认一致） ----------------
+// ---------------- 护栏策略（与 Python domain.GuardrailPolicy 对应） ----------------
 
 export interface GuardrailPolicy {
   maxCostPerRunUsd: number;
   maxCostPerDayUsd: number;
   maxSimAmountUsd: number;
+  /** 待审批超时分钟数（policy.md 的 approval_timeout_minutes）。 */
+  approvalTimeoutMinutes: number;
   riskLevels: Readonly<Record<string, string>>;
   approvalDefault: string;
 }
 
+/**
+ * 类型默认值（仅作类型占位与测试兜底）。运行政策不得取自这里：
+ * 组合根启动时解析 harness/guardrails/policy.md（见
+ * infrastructure/guardrails/policy-file.ts），读不到或残缺即 fail-closed。
+ */
 export const DEFAULT_GUARDRAIL_POLICY: GuardrailPolicy = {
   maxCostPerRunUsd: 1.0,
   maxCostPerDayUsd: 10.0,
   maxSimAmountUsd: 1000.0,
+  approvalTimeoutMinutes: 60,
   riskLevels: {
     read: "auto",
     write: "batch_approval",
+    irreversible: "single_approval",
+  },
+  approvalDefault: "deny",
+};
+
+/** fail-closed 政策：限额归零、全部单独审批（与 Python _fail_closed_policy 同口径）。 */
+export const FAIL_CLOSED_GUARDRAIL_POLICY: GuardrailPolicy = {
+  maxCostPerRunUsd: 0,
+  maxCostPerDayUsd: 0,
+  maxSimAmountUsd: 0,
+  approvalTimeoutMinutes: 60,
+  riskLevels: {
+    read: "single_approval",
+    write: "single_approval",
     irreversible: "single_approval",
   },
   approvalDefault: "deny",

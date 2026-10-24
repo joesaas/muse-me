@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import type { ScriptStore } from "../../domain/ports.js";
 import type { ScriptRecord, ScriptVersionRecord } from "../../domain/types.js";
-import { nowIso } from "./database.js";
+import { nowIso, transaction } from "./database.js";
 import { parseJsonObject } from "./json.js";
 
 interface ScriptRow {
@@ -45,22 +45,33 @@ function toScript(row: ScriptRow): ScriptRecord {
 export class SqliteScriptStore implements ScriptStore {
   constructor(private readonly db: DatabaseSync) {}
 
+  /**
+   * 共享连接句柄：seed 整批事务用（组合根不改时，seed 从各 store 取唯一
+   * 共享连接包事务；见 application/seed.ts）。
+   */
+  get database(): DatabaseSync {
+    return this.db;
+  }
+
   createScript(script: ScriptRecord): ScriptRecord {
-    this.db
-      .prepare(
-        `INSERT OR REPLACE INTO scripts
+    // 脚本行与版本行同生同灭：两写包在同一事务内。
+    return transaction(this.db, () => {
+      this.db
+        .prepare(
+          `INSERT OR REPLACE INTO scripts
            (id, user_id, name, description, doc, current_version,
             origin_chat_id, origin_feed_item_id, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        script.id, script.userId, script.name, script.description,
-        JSON.stringify(script.doc ?? {}), script.currentVersion,
-        script.originChatId, script.originFeedItemId, script.createdAt,
-        script.updatedAt,
-      );
-    this.saveVersion(script);
-    return script;
+        )
+        .run(
+          script.id, script.userId, script.name, script.description,
+          JSON.stringify(script.doc ?? {}), script.currentVersion,
+          script.originChatId, script.originFeedItemId, script.createdAt,
+          script.updatedAt,
+        );
+      this.saveVersion(script);
+      return script;
+    });
   }
 
   getScript(id: string): ScriptRecord | undefined {
@@ -80,19 +91,22 @@ export class SqliteScriptStore implements ScriptStore {
   updateScript(script: ScriptRecord): ScriptRecord {
     // 与 Python update_script 同口径：版本号递增并落一条新版本记录；
     // UPDATE 只写 name/description/doc/current_version/updated_at（不写来源字段）。
+    // 两写同一事务（同 createScript）。
     script.currentVersion += 1;
     script.updatedAt = nowIso();
-    this.db
-      .prepare(
-        `UPDATE scripts SET name = ?, description = ?, doc = ?,
+    return transaction(this.db, () => {
+      this.db
+        .prepare(
+          `UPDATE scripts SET name = ?, description = ?, doc = ?,
                 current_version = ?, updated_at = ? WHERE id = ?`,
-      )
-      .run(
-        script.name, script.description, JSON.stringify(script.doc ?? {}),
-        script.currentVersion, script.updatedAt, script.id,
-      );
-    this.saveVersion(script);
-    return script;
+        )
+        .run(
+          script.name, script.description, JSON.stringify(script.doc ?? {}),
+          script.currentVersion, script.updatedAt, script.id,
+        );
+      this.saveVersion(script);
+      return script;
+    });
   }
 
   getScriptVersion(

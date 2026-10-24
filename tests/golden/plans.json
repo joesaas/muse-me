@@ -1,0 +1,350 @@
+{
+  "cases": [
+    {
+      "expected": {
+        "amount_defaulted": false,
+        "needs_approval": [
+          false,
+          false,
+          true
+        ],
+        "steps": [
+          {
+            "args": {
+              "token": "MEME"
+            },
+            "needs_approval": false,
+            "save_as": "scan",
+            "tool": "meme.scan"
+          },
+          {
+            "args": {
+              "amount_usd": 100,
+              "token": "MEME"
+            },
+            "needs_approval": false,
+            "save_as": "quote",
+            "tool": "dex.quote"
+          },
+          {
+            "args": {
+              "amount_usd": 100,
+              "token": "MEME"
+            },
+            "needs_approval": true,
+            "save_as": "swap",
+            "tool": "dex.sim_swap"
+          }
+        ],
+        "tools": [
+          "meme.scan",
+          "dex.quote",
+          "dex.sim_swap"
+        ]
+      },
+      "id": "buy-chat",
+      "note": "买入意图在 chat 场景也产买入三步（旧 Python 只在 script_build 产此计划、chat 只查价，是本次对齐修掉的分叉）。token 说明：meme 一词大写后 MEME 是首个候选符号，两边抽取口径均为首候选，故 token=MEME，不是默认 BONK。",
+      "prompt": "买这个 meme，100 美元，先查流动性",
+      "scene": "chat"
+    },
+    {
+      "expected": {
+        "amount_defaulted": false,
+        "needs_approval": [
+          false,
+          false,
+          true
+        ],
+        "steps": [
+          {
+            "args": {
+              "token": "MEME"
+            },
+            "needs_approval": false,
+            "save_as": "scan",
+            "tool": "meme.scan"
+          },
+          {
+            "args": {
+              "amount_usd": 100,
+              "token": "MEME"
+            },
+            "needs_approval": false,
+            "save_as": "quote",
+            "tool": "dex.quote"
+          },
+          {
+            "args": {
+              "amount_usd": 100,
+              "token": "MEME"
+            },
+            "needs_approval": true,
+            "save_as": "swap",
+            "tool": "dex.sim_swap"
+          }
+        ],
+        "tools": [
+          "meme.scan",
+          "dex.quote",
+          "dex.sim_swap"
+        ]
+      },
+      "id": "buy-script-build",
+      "note": "与 buy-chat 同一 prompt、期望完全相同：买入意图场景无关。",
+      "prompt": "买这个 meme，100 美元，先查流动性",
+      "scene": "script_build"
+    },
+    {
+      "expected": {
+        "amount_defaulted": false,
+        "needs_approval": [
+          false,
+          true
+        ],
+        "steps": [
+          {
+            "args": {
+              "asset": "USDC"
+            },
+            "needs_approval": false,
+            "save_as": "rates",
+            "tool": "aave.rates"
+          },
+          {
+            "args": {
+              "amount_usd": 500,
+              "asset": "USDC"
+            },
+            "needs_approval": true,
+            "save_as": "supply",
+            "tool": "aave.sim_supply"
+          }
+        ],
+        "tools": [
+          "aave.rates",
+          "aave.sim_supply"
+        ]
+      },
+      "id": "aave-chat",
+      "note": "Aave 意图优先于买入/token：即使 prompt 含 AAVE（已知 token）也不走查价/买入。asset 说明：首个候选符号是 AAVE，按两边同款规则（token != AAVE 才作 asset，否则 USDC）得 USDC。",
+      "prompt": "查 Aave 利率并模拟存入 500 美元",
+      "scene": "chat"
+    },
+    {
+      "expected": {
+        "amount_defaulted": false,
+        "needs_approval": [
+          false,
+          true
+        ],
+        "steps": [
+          {
+            "args": {
+              "asset": "USDC"
+            },
+            "needs_approval": false,
+            "save_as": "rates",
+            "tool": "aave.rates"
+          },
+          {
+            "args": {
+              "amount_usd": 500,
+              "asset": "USDC"
+            },
+            "needs_approval": true,
+            "save_as": "supply",
+            "tool": "aave.sim_supply"
+          }
+        ],
+        "tools": [
+          "aave.rates",
+          "aave.sim_supply"
+        ]
+      },
+      "id": "aave-script-build",
+      "note": "与 aave-chat 同一 prompt、期望完全相同：Aave 意图优先于 script_build 场景的买入分支。",
+      "prompt": "查 Aave 利率并模拟存入 500 美元",
+      "scene": "script_build"
+    },
+    {
+      "expected": {
+        "amount_defaulted": true,
+        "needs_approval": [
+          false
+        ],
+        "steps": [
+          {
+            "args": {
+              "symbol": "BTC"
+            },
+            "needs_approval": false,
+            "save_as": "quote",
+            "tool": "market.quote"
+          }
+        ],
+        "tools": [
+          "market.quote"
+        ]
+      },
+      "id": "quote-chat",
+      "note": "无买入/Aave 意图、有 token：只查价一步。prompt 无金额，故 amount_defaulted=true（金额口径与计划步无关，两边都照此留痕）。",
+      "prompt": "BTC 现在什么价",
+      "scene": "chat"
+    },
+    {
+      "expected": {
+        "amount_defaulted": true,
+        "needs_approval": [],
+        "steps": [],
+        "tools": []
+      },
+      "id": "empty-chat",
+      "note": "无买入/Aave 意图、无 token：空计划（零步），不编造默认标的。amount_defaulted=true（无金额可抽）。",
+      "prompt": "你好，能陪我聊聊吗",
+      "scene": "chat"
+    },
+    {
+      "expected": {
+        "amount_defaulted": true,
+        "needs_approval": [
+          false,
+          false,
+          true
+        ],
+        "steps": [
+          {
+            "args": {
+              "token": "BONK"
+            },
+            "needs_approval": false,
+            "save_as": "scan",
+            "tool": "meme.scan"
+          },
+          {
+            "args": {
+              "amount_usd": 100,
+              "token": "BONK"
+            },
+            "needs_approval": false,
+            "save_as": "quote",
+            "tool": "dex.quote"
+          },
+          {
+            "args": {
+              "amount_usd": 100,
+              "token": "BONK"
+            },
+            "needs_approval": true,
+            "save_as": "swap",
+            "tool": "dex.sim_swap"
+          }
+        ],
+        "tools": [
+          "meme.scan",
+          "dex.quote",
+          "dex.sim_swap"
+        ]
+      },
+      "id": "buy-amount-defaulted-chat",
+      "note": "买入但无金额：金额默认 100 且 amount_defaulted=true，报价与成交步同额；不是静默猜测，标记必须留痕。",
+      "prompt": "买 BONK",
+      "scene": "chat"
+    },
+    {
+      "expected": {
+        "amount_defaulted": false,
+        "needs_approval": [
+          false,
+          false,
+          true
+        ],
+        "steps": [
+          {
+            "args": {
+              "token": "BONK"
+            },
+            "needs_approval": false,
+            "save_as": "scan",
+            "tool": "meme.scan"
+          },
+          {
+            "args": {
+              "amount_usd": 200,
+              "token": "BONK"
+            },
+            "needs_approval": false,
+            "save_as": "quote",
+            "tool": "dex.quote"
+          },
+          {
+            "args": {
+              "amount_usd": 200,
+              "token": "BONK"
+            },
+            "needs_approval": true,
+            "save_as": "swap",
+            "tool": "dex.sim_swap"
+          }
+        ],
+        "tools": [
+          "meme.scan",
+          "dex.quote",
+          "dex.sim_swap"
+        ]
+      },
+      "id": "buy-explicit-token-chat",
+      "note": "显式 token + 显式金额的买入：锁定 token/金额抽取，不走默认分支。",
+      "prompt": "买 BONK 200 美元",
+      "scene": "chat"
+    },
+    {
+      "expected": {
+        "amount_defaulted": true,
+        "needs_approval": [
+          false,
+          false,
+          true
+        ],
+        "steps": [
+          {
+            "args": {
+              "token": "BONK"
+            },
+            "needs_approval": false,
+            "save_as": "scan",
+            "tool": "meme.scan"
+          },
+          {
+            "args": {
+              "amount_usd": 100,
+              "token": "BONK"
+            },
+            "needs_approval": false,
+            "save_as": "quote",
+            "tool": "dex.quote"
+          },
+          {
+            "args": {
+              "amount_usd": 100,
+              "token": "BONK"
+            },
+            "needs_approval": true,
+            "save_as": "swap",
+            "tool": "dex.sim_swap"
+          }
+        ],
+        "tools": [
+          "meme.scan",
+          "dex.quote",
+          "dex.sim_swap"
+        ]
+      },
+      "id": "script-build-neutral",
+      "note": "TS 正本行为：scene=script_build 本身即触发买入三步（无买入关键词、无 token 时标的默认 BONK、金额默认 100）。Python 保留此分支——scripts_engine.build_draft 以 plan('script_build', haystack) 抽 token/金额，删掉它会改草稿构建行为；意图标的为空时草稿层自有无证据不采信的过滤，不由计划器兜底。",
+      "prompt": "帮我做个脚本",
+      "scene": "script_build"
+    }
+  ],
+  "note": "计划器平价 golden fixtures（ARCH-3 批次三）。正本口径 = TS server/src/infrastructure/runtime/simulated.ts 的 buildPlan；Python src/muse_me/llm.py 的 MockModel.plan 必须与它同题同计划。同一用例被 Python 测试（tests/test_planner_golden.py）与 TS 测试（server/tests/plans-golden.test.ts）共同读取、各自断言。字段说明：prompt/scene 为输入；expected.steps 每步含 tool（工具名顺序即执行顺序）、args（关键参数全量）、save_as（事实板键，Python Step.save_as / TS PlanStep.saveAs）、needs_approval（是否挂审批）；expected.amount_defaulted 为金额是否用了默认 100（Python Plan.metadata.amount_defaulted / TS SimulatedPlan.amountDefaulted）。label 与 cost 不进 golden：两边 label 文案与成本表既有差异属遗留项（见批次报告），不在此断言。",
+  "version": 1
+}

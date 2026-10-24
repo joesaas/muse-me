@@ -13,12 +13,15 @@ export interface Chat {
 export interface Message {
   id: string;
   chat_id: string;
-  role: "user" | "assistant" | "sys";
+  // 与两后端落库一致：system（旧前端曾用 sys，已归一，见 api.normalizeMessageRole）。
+  role: "user" | "assistant" | "system";
   content: string;
   created_at?: string;
 }
 
 export interface RunEvent {
+  // seq：server SSE 的事件序号（帧 id 与 data.seq 一致）；无序号的旧帧为 undefined。
+  seq?: number;
   type: string;
   text?: string;
   tool?: string;

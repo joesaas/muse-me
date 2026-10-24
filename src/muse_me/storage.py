@@ -10,6 +10,7 @@ import sqlite3
 import threading
 import time
 import uuid
+from contextlib import contextmanager
 from typing import Any
 
 from .domain import (
@@ -33,12 +34,17 @@ from .domain import (
 )
 from .errors import DemoError, InvalidTransition, NotFound, ValidationFailed
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
+# 版本史（契约见 docs/schema-contract.md）：
+#   v1 基线：SCHEMA_SQL 各表（旧库 feed_items.published_at 可能是 NOT NULL，
+#     且无 run_snapshots 表、无 schema_meta 行）。
+#   v2：Python 侧补 run_snapshots 占位表（与 server 同形；Python 续跑仍走
+#     事件重建、不读该表）＋旧库 feed_items.published_at 改为可空（重建表）。
+#     server 侧 v2（database.ts）为 runs 补 tokens/harness_version 两列；
+#     两边新库建表时直接含 v2 结构，迁移只为旧库升级服务。
 # 注意：SCHEMA_SQL 全部是 CREATE TABLE IF NOT EXISTS，只对新建库生效；
-# 已存在的旧库不会被迁移（缺 UNIQUE/FK 的旧表保持旧结构），需要迁移时另行处理。
-# run_events/approvals 的 FOREIGN KEY 指向 runs：SqliteStore 连接时开
-# PRAGMA foreign_keys=ON 使其真实生效（仅新库的表结构带 FK）。
+# 已存在的旧库靠 migrate() 按版本升级（见下），不再是「旧表保持旧结构」。
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS schema_meta (
     key TEXT PRIMARY KEY,
@@ -166,7 +172,7 @@ CREATE TABLE IF NOT EXISTS feed_items (
     url TEXT NOT NULL DEFAULT '',
     topic TEXT NOT NULL DEFAULT '',
     entities TEXT NOT NULL DEFAULT '{}',
-    published_at TEXT NOT NULL DEFAULT '',
+    published_at TEXT,  -- 无时间存 NULL，不编造（旧库 NOT NULL 列由 v2 迁移重建）
     prompt_version INTEGER,
     created_at TEXT NOT NULL DEFAULT ''
 );
@@ -205,16 +211,152 @@ CREATE TABLE IF NOT EXISTS files (
     size INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT ''
 );
+CREATE TABLE IF NOT EXISTS run_snapshots (
+    run_id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL DEFAULT '',
+    payload TEXT NOT NULL DEFAULT '{}',
+    updated_at TEXT NOT NULL DEFAULT ''
+);
 """
 
 
-def init_schema(conn: sqlite3.Connection) -> None:
-    conn.executescript(SCHEMA_SQL)
+def _table_columns(conn: sqlite3.Connection, table: str) -> list[dict[str, Any]]:
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    return [
+        {"name": r[1], "type": r[2], "notnull": bool(r[3])}
+        for r in rows
+    ]
+
+
+def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+    ).fetchone()
+    return row is not None
+
+
+def get_schema_version(conn: sqlite3.Connection) -> int:
+    """读 schema_meta.version；无表/无行/非整数一律视为 0（待迁移的旧库）。"""
+    if not _table_exists(conn, "schema_meta"):
+        return 0
+    row = conn.execute(
+        "SELECT value FROM schema_meta WHERE key='version'"
+    ).fetchone()
+    if row is None:
+        return 0
+    try:
+        return int(row[0])
+    except (TypeError, ValueError):
+        return 0
+
+
+def _migrate_feed_items_nullable(conn: sqlite3.Connection) -> None:
+    """v2 ①：旧库 feed_items.published_at NOT NULL → 可空。
+
+    SQLite 改列可空无 ALTER 口径，用标准重建：建新表→拷数据→删旧表→改名。
+    已是可空或无表时直接跳过（幂等）。重建在独立事务内完成；期间关
+    foreign_keys（SQLite 禁止在事务内改该 pragma，故先关、事务外恢复），
+    且无任何表以外键指向 feed_items，拷数据不会触发外键问题。
+    """
+    if not _table_exists(conn, "feed_items"):
+        return
+    cols = _table_columns(conn, "feed_items")
+    published = next((c for c in cols if c["name"] == "published_at"), None)
+    if published is None or not published["notnull"]:
+        return
+    expected = [
+        "id", "user_id", "title", "summary", "source", "url", "topic",
+        "entities", "published_at", "prompt_version", "created_at",
+    ]
+    keep = [c for c in expected if any(x["name"] == c for x in cols)]
+    # 新表 user_id 为 NOT NULL 且无默认值：旧表若缺该列（极早期/手工库），
+    # 用 Demo 默认用户补齐，避免整库迁移因一行缺列而失败丢数据。
+    select_exprs = list(keep)
+    if "user_id" not in keep:
+        keep = keep + ["user_id"]
+        select_exprs = select_exprs + ["'demo-user'"]
+    col_list = ", ".join(keep)
+    select_list = ", ".join(select_exprs)
+    fk_row = conn.execute("PRAGMA foreign_keys").fetchone()
+    fk_on = bool(fk_row[0]) if fk_row else False
+    conn.execute("PRAGMA foreign_keys=OFF")
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            conn.execute(
+                "CREATE TABLE feed_items_new ("
+                "id TEXT PRIMARY KEY,"
+                "user_id TEXT NOT NULL,"
+                "title TEXT NOT NULL DEFAULT '',"
+                "summary TEXT NOT NULL DEFAULT '',"
+                "source TEXT NOT NULL DEFAULT '',"
+                "url TEXT NOT NULL DEFAULT '',"
+                "topic TEXT NOT NULL DEFAULT '',"
+                "entities TEXT NOT NULL DEFAULT '{}',"
+                "published_at TEXT,"
+                "prompt_version INTEGER,"
+                "created_at TEXT NOT NULL DEFAULT ''"
+                ")"
+            )
+            conn.execute(
+                f"INSERT INTO feed_items_new ({col_list})"
+                f" SELECT {select_list} FROM feed_items"
+            )
+            conn.execute("DROP TABLE feed_items")
+            conn.execute("ALTER TABLE feed_items_new RENAME TO feed_items")
+            conn.execute("COMMIT")
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
+    finally:
+        conn.execute(f"PRAGMA foreign_keys={'ON' if fk_on else 'OFF'}")
+
+
+def _migrate_to_2(conn: sqlite3.Connection) -> None:
+    _migrate_feed_items_nullable(conn)
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS run_snapshots ("
+        "run_id TEXT PRIMARY KEY,"
+        "kind TEXT NOT NULL DEFAULT '',"
+        "payload TEXT NOT NULL DEFAULT '{}',"
+        "updated_at TEXT NOT NULL DEFAULT ''"
+        ")"
+    )
+
+
+# 目标版本 → 迁移函数（按版本升序执行；每个函数自身幂等）。
+MIGRATIONS: list[tuple[int, Any]] = [(2, _migrate_to_2)]
+
+
+def migrate(conn: sqlite3.Connection) -> int:
+    """把库升级到 SCHEMA_VERSION（幂等：重复跑不报错、不丢数据）。
+
+    高于当前代码版本的库（更新的程序建的）不降级、不动数据，原样返回其版本。
+    数据库打开时调用（SqliteStore 经 init_schema 调用；也可独立调用）。
+    """
+    version = get_schema_version(conn)
+    if version > SCHEMA_VERSION:
+        return version
+    for target, fn in MIGRATIONS:
+        if version < target:
+            fn(conn)
+            version = target
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS schema_meta ("
+        "key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+    )
     conn.execute(
         "INSERT OR REPLACE INTO schema_meta(key, value) VALUES('version', ?)",
         (str(SCHEMA_VERSION),),
     )
     conn.commit()
+    return SCHEMA_VERSION
+
+
+def init_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript(SCHEMA_SQL)
+    conn.commit()
+    migrate(conn)
 
 
 def _now() -> str:
@@ -240,6 +382,7 @@ class SqliteStore:
     def __init__(self, path: str = ":memory:"):
         self.path = path
         self._lock = threading.RLock()
+        self._tx_depth = 0
         self.conn = sqlite3.connect(path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys=ON")
@@ -249,10 +392,53 @@ class SqliteStore:
         with self._lock:
             self.conn.close()
 
+    @contextmanager
+    def transaction(self):
+        """显式事务（BE-3）：BEGIN IMMEDIATE，异常回滚、成功提交。
+
+        事务内的 _exec 不再逐条 commit（见 _exec），多条语句共享同一事务。
+        嵌套调用加入外层事务（只由最外层提交/回滚），故 create_script 等
+        自带事务的方法被 seed 等外层事务包裹时仍正确。
+        仅同线程内使用（SqliteStore 的锁是线程 RLock，跨线程不共享事务）。
+        """
+        with self._lock:
+            if self._tx_depth > 0:
+                self._tx_depth += 1
+                try:
+                    yield
+                finally:
+                    self._tx_depth -= 1
+                return
+            owned = True
+            try:
+                self.conn.execute("BEGIN IMMEDIATE")
+            except sqlite3.OperationalError as exc:
+                # 连接上已有外来事务时退化为加入：成功不代提交，
+                # 异常仍回滚（fail-closed；本包正常路径不会走到这里）。
+                if "within a transaction" in str(exc):
+                    owned = False
+                else:
+                    raise
+            self._tx_depth = 1
+            try:
+                yield
+            except BaseException:
+                # 无论是否拥有事务，异常都回滚（fail-closed；非拥有时
+                # 回滚的是外来事务，调用方会看到异常故不会误以为已提交）。
+                self.conn.rollback()
+                raise
+            else:
+                if owned:
+                    self.conn.commit()
+            finally:
+                self._tx_depth = 0
+
     def _exec(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
         with self._lock:
             cur = self.conn.execute(sql, params)
-            self.conn.commit()
+            # 事务内不中途提交：多条语句共享同一事务，由 transaction() 收尾。
+            if self._tx_depth == 0:
+                self.conn.commit()
             return cur
 
     def _exec_t(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
@@ -491,6 +677,29 @@ class SqliteStore:
         approval.decided_at = decided_at
         return approval
 
+    def expire_approval(
+        self, approval_id: str, reason: str = "approval_timeout"
+    ) -> Approval | None:
+        """超时过期：仅当 status='pending' 时把审批置 rejected（原子条件 UPDATE）。
+
+        返回过期后的审批；已决策或不存在时返回 None（调用方据此分型）。
+        """
+        approval = self.get_approval(approval_id)
+        if approval is None:
+            return None
+        decided_at = _now()
+        cur = self._exec(
+            "UPDATE approvals SET status='rejected', reason=?, decided_at=?"
+            " WHERE id=? AND status='pending'",
+            (reason, decided_at, approval_id),
+        )
+        if cur.rowcount == 0:
+            return None
+        approval.status = ApprovalStatus.REJECTED
+        approval.reason = reason
+        approval.decided_at = decided_at
+        return approval
+
     # ---------------- memories ----------------
     def add_memory(self, item: MemoryItem) -> MemoryItem:
         self._exec(
@@ -556,15 +765,17 @@ class SqliteStore:
 
     # ---------------- scripts / script_versions ----------------
     def create_script(self, script: Script) -> Script:
-        self._exec(
-            "INSERT OR REPLACE INTO scripts(id,user_id,name,description,doc,current_version,"
-            "origin_chat_id,origin_feed_item_id,created_at,updated_at)"
-            " VALUES(?,?,?,?,?,?,?,?,?,?)",
-            (script.id, script.user_id, script.name, script.description, _j(script.doc),
-             script.current_version, script.origin_chat_id, script.origin_feed_item_id,
-             script.created_at, script.updated_at),
-        )
-        self.save_script_version(script)
+        # 脚本行与版本行同生同灭：两写包在同一事务内。
+        with self.transaction():
+            self._exec(
+                "INSERT OR REPLACE INTO scripts(id,user_id,name,description,doc,current_version,"
+                "origin_chat_id,origin_feed_item_id,created_at,updated_at)"
+                " VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (script.id, script.user_id, script.name, script.description, _j(script.doc),
+                 script.current_version, script.origin_chat_id, script.origin_feed_item_id,
+                 script.created_at, script.updated_at),
+            )
+            self.save_script_version(script)
         return script
 
     def get_script(self, script_id: str) -> Script | None:
@@ -588,16 +799,17 @@ class SqliteStore:
         )
 
     def update_script(self, script: Script) -> Script:
-        """保存修改：版本号递增并落一条新 ScriptVersion。"""
+        """保存修改：版本号递增并落一条新 ScriptVersion（两写同一事务）。"""
         script.current_version += 1
         script.updated_at = _now()
-        self._exec(
-            "UPDATE scripts SET name=?, description=?, doc=?, current_version=?, updated_at=?"
-            " WHERE id=?",
-            (script.name, script.description, _j(script.doc), script.current_version,
-             script.updated_at, script.id),
-        )
-        self.save_script_version(script)
+        with self.transaction():
+            self._exec(
+                "UPDATE scripts SET name=?, description=?, doc=?, current_version=?, updated_at=?"
+                " WHERE id=?",
+                (script.name, script.description, _j(script.doc), script.current_version,
+                 script.updated_at, script.id),
+            )
+            self.save_script_version(script)
         return script
 
     def save_script_version(self, script: Script) -> ScriptVersion:
@@ -721,10 +933,12 @@ class SqliteStore:
         return [self._feed_item(r) for r in rows]
 
     def replace_feed_items(self, user_id: str, items: list[FeedItem]) -> None:
-        self._exec("DELETE FROM feed_items WHERE user_id=?", (user_id,))
-        for item in items:
-            item.user_id = user_id
-            self.add_feed_item(item)
+        # DELETE + 多插同一事务：中途失败旧数据仍在（不出现删完未插完的空窗）。
+        with self.transaction():
+            self._exec("DELETE FROM feed_items WHERE user_id=?", (user_id,))
+            for item in items:
+                item.user_id = user_id
+                self.add_feed_item(item)
 
     @staticmethod
     def _feed_item(row: sqlite3.Row) -> FeedItem:

@@ -85,6 +85,8 @@ class ApprovalStatus(str, Enum):
     PENDING = "pending"
     APPROVED = "approved"
     DENIED = "denied"
+    # 超时过期（由超时接线写入，reason=approval_timeout；非用户决策）
+    REJECTED = "rejected"
 
 
 class RiskLevel(str, Enum):
@@ -259,7 +261,7 @@ class FeedItem:
     url: str = ""
     topic: str = ""
     entities: dict[str, Any] = field(default_factory=dict)  # token/合约/赛道
-    published_at: str = ""
+    published_at: str | None = None  # 池内无时间时为 None，不编造
     prompt_version: int | None = None
     id: str = field(default_factory=_new_id)
     created_at: str = field(default_factory=_now)

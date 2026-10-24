@@ -22,7 +22,10 @@ import { registerRoutes } from "./api/routes.js";
 import type { ServerConfig } from "./config.js";
 import { AppError, ValidationFailed } from "./domain/errors.js";
 import type { RuntimePort } from "./domain/ports.js";
-import { DEFAULT_GUARDRAIL_POLICY } from "./domain/types.js";
+import {
+  loadGuardrailPolicy,
+  resolveHarnessRoot,
+} from "./infrastructure/guardrails/policy-file.js";
 import { AgentCoreAdmin } from "./infrastructure/agentcore/agentcore-admin.js";
 import { InMemorySessionStore } from "./infrastructure/auth/in-memory-session-store.js";
 import { AgentCoreRuntime } from "./infrastructure/runtime/agentcore-runtime.js";
@@ -112,10 +115,29 @@ export function buildApp(config: ServerConfig): BuiltApp {
     });
   });
 
+  // 护栏单真值源：启动时解析 harness/guardrails/policy.md；读不到或残缺即
+  // fail-closed（限额归零、全部单独审批），不再注入硬编码常量作运行政策。
+  // load 结果先于运行时构造：LocalRuntime 与 ScriptEngine/ApprovalService
+  // 共用同一份解析后政策与同一工具注册表（批次三单实现）。
+  const guardrailLoad = loadGuardrailPolicy(config.harnessRoot);
+  const guardrailPolicy = guardrailLoad.policy;
+  const guardrailSource = guardrailLoad.source;
+  // 可观测路径：解析到的 harness 根（文件/残缺都可定位）→ policy.md；
+  // 只配了不存在的根时退回配置根拼出的尝试路径；两者皆无则为空串（不编造）。
+  const guardrailRoot = resolveHarnessRoot(config.harnessRoot);
+  const guardrailPolicyPath = guardrailRoot
+    ? path.join(guardrailRoot, "guardrails", "policy.md")
+    : config.harnessRoot
+      ? path.join(path.resolve(config.harnessRoot), "guardrails", "policy.md")
+      : "";
+  console.log(
+    `护栏来源：guardrailSource=${guardrailSource} guardrailPolicyPath=${guardrailPolicyPath}`,
+  );
+
   const runtime: RuntimePort =
     config.runtimeMode === "agentcore"
       ? new AgentCoreRuntime(config.agentcore, runStore)
-      : new LocalRuntime(runStore, snapshotStore);
+      : new LocalRuntime(runStore, snapshotStore, toolRegistry, guardrailPolicy);
   const agentAdmin = new AgentCoreAdmin(config.agentcore);
 
   const auth = new AuthService(config.password, config.userId, sessionStore);
@@ -127,7 +149,7 @@ export function buildApp(config: ServerConfig): BuiltApp {
     scriptStore,
     feedStore,
     toolRegistry,
-    DEFAULT_GUARDRAIL_POLICY,
+    guardrailPolicy,
     config.userId,
   );
   const scriptService = new ScriptService(
@@ -152,6 +174,7 @@ export function buildApp(config: ServerConfig): BuiltApp {
     chatService,
     config.userId,
     scriptService,
+    guardrailPolicy,
   );
   const jobService = new JobService(jobStore, scriptStore, config.userId);
   const memoryService = new MemoryService(memoryStore, config.userId);
@@ -181,6 +204,9 @@ export function buildApp(config: ServerConfig): BuiltApp {
     notifications: notificationStore,
     tools: toolRegistry,
     userId: config.userId,
+    sweepApprovals: () => {
+      approvalService.expireStale();
+    },
     runner: (job, params, entity) => {
       const result = scriptService.run(job.scriptId, {
         params,
@@ -259,6 +285,8 @@ export function buildApp(config: ServerConfig): BuiltApp {
     feedStore,
     scriptStore,
     userId: config.userId,
+    guardrailSource,
+    guardrailPolicyPath,
   });
 
   // 前端同源托管：/api/* 是静态段路由，优先级高于静态通配，互不干扰。

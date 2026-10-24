@@ -20,27 +20,27 @@ describe("validate_trigger（移植 Python scheduler.validate_trigger）", () =>
     triggerSpec: spec,
   });
 
-  it("cron_daily 格式/范围非法被拒", () => {
+  it("cron_daily 格式/范围非法被拒", async () => {
     expect(validateTrigger(job({ cron_daily: "25:00" }))).toContain("超出范围");
     expect(validateTrigger(job({ cron_daily: "9:60" }))).toContain("超出范围");
     expect(validateTrigger(job({ cron_daily: "abc" }))).toContain("格式应为 HH:MM");
     expect(validateTrigger(job({ cron_daily: "8点半" }))).toContain("格式应为 HH:MM");
   });
 
-  it("every_minutes < 1 或非整数被拒", () => {
+  it("every_minutes < 1 或非整数被拒", async () => {
     expect(validateTrigger(job({ every_minutes: 0 }))).toContain("≥ 1");
     expect(validateTrigger(job({ every_minutes: -3 }))).toContain("≥ 1");
     expect(validateTrigger(job({ every_minutes: "x" }))).toContain("不是整数");
   });
 
-  it("合法规格与非 time 类返回 null（同 Python：非 time 不验）", () => {
+  it("合法规格与非 time 类返回 null（同 Python：非 time 不验）", async () => {
     expect(validateTrigger(job({ cron_daily: "08:30" }))).toBeNull();
     expect(validateTrigger(job({ every_minutes: 30 }))).toBeNull();
     expect(validateTrigger(job({ keyword: "x" }, "event"))).toBeNull();
     expect(validateTrigger(job({}, "condition"))).toBeNull();
   });
 
-  it("next_fire：every_minutes 以 next_fire_at 为锚滚动到严格晚于 now", () => {
+  it("next_fire：every_minutes 以 next_fire_at 为锚滚动到严格晚于 now", async () => {
     const now = new Date("2026-10-24T10:00:00.000Z");
     const anchored = nextFire(
       { triggerType: "time", triggerSpec: { every_minutes: 30 }, nextFireAt: "2026-10-24T09:50:00.000Z" },
@@ -82,7 +82,7 @@ function buildDaemonStack() {
       calls.push({ job, params });
       return { runId: `run-${calls.length}`, status: "done" };
     },
-    sleeper: () => {},
+    sleeper: async () => {},
   });
   const makeJob = (partial: Partial<JobRecord>): JobRecord => {
     const job: JobRecord = {
@@ -112,7 +112,7 @@ let stack: ReturnType<typeof buildDaemonStack>;
 afterEach(() => stack?.db.close());
 
 describe("SchedulerDaemon 触发语义", () => {
-  it("condition 边沿触发：首轮建基线、假→真触发一次、持续真不重复、假→真再触发", () => {
+  it("condition 边沿触发：首轮建基线、假→真触发一次、持续真不重复、假→真再触发", async () => {
     stack = buildDaemonStack();
     stack.makeJob({
       triggerType: "condition",
@@ -122,39 +122,39 @@ describe("SchedulerDaemon 触发语义", () => {
     const at = (sec: number) => new Date(t0.getTime() + sec * 1000);
 
     stack.setPrice(50);
-    stack.daemon.tick(at(0)); // 基线（假）
+    await stack.daemon.tick(at(0)); // 基线（假）
     expect(stack.calls).toHaveLength(0);
 
     stack.setPrice(150);
-    stack.daemon.tick(at(61)); // 假→真：触发
+    await stack.daemon.tick(at(61)); // 假→真：触发
     expect(stack.calls).toHaveLength(1);
 
-    stack.daemon.tick(at(122)); // 持续真：不重复
+    await stack.daemon.tick(at(122)); // 持续真：不重复
     expect(stack.calls).toHaveLength(1);
 
     stack.setPrice(50);
-    stack.daemon.tick(at(183)); // 变假
+    await stack.daemon.tick(at(183)); // 变假
     expect(stack.calls).toHaveLength(1);
 
     stack.setPrice(150);
-    stack.daemon.tick(at(244)); // 再假→真（已过 60 秒冷却）：再触发
+    await stack.daemon.tick(at(244)); // 再假→真（已过 60 秒冷却）：再触发
     expect(stack.calls).toHaveLength(2);
   });
 
-  it("condition 重启先建基线：进程重启后持续为真不误触发", () => {
+  it("condition 重启先建基线：进程重启后持续为真不误触发", async () => {
     stack = buildDaemonStack();
     stack.makeJob({
       triggerType: "condition",
       triggerSpec: { metric: "ETH", op: ">", threshold: 100 },
     });
     stack.setPrice(150); // 一直为真
-    stack.daemon.tick(new Date()); // 新 daemon 首轮只建基线
+    await stack.daemon.tick(new Date()); // 新 daemon 首轮只建基线
     expect(stack.calls).toHaveLength(0);
-    stack.daemon.tick(new Date(Date.now() + 120_000)); // 仍为真、无边沿
+    await stack.daemon.tick(new Date(Date.now() + 120_000)); // 仍为真、无边沿
     expect(stack.calls).toHaveLength(0);
   });
 
-  it("time 触发：到点执行一次并滚动 next_fire；错过多个周期只合并一次", () => {
+  it("time 触发：到点执行一次并滚动 next_fire；错过多个周期只合并一次", async () => {
     stack = buildDaemonStack();
     const now = new Date("2026-10-24T10:00:00.000Z");
     const job = stack.makeJob({
@@ -162,7 +162,7 @@ describe("SchedulerDaemon 触发语义", () => {
       triggerSpec: { every_minutes: 10 },
       nextFireAt: "2026-10-24T08:00:00.000Z", // 已错过 12 个周期
     });
-    const fired = stack.daemon.tick(now);
+    const fired = await stack.daemon.tick(now);
     expect(stack.calls).toHaveLength(1);
     expect(fired).toHaveLength(1);
     expect(fired[0]?.status).toBe("done");
@@ -170,7 +170,7 @@ describe("SchedulerDaemon 触发语义", () => {
     expect(new Date(after!.nextFireAt).getTime()).toBeGreaterThan(now.getTime());
   });
 
-  it("event 触发：首轮基线不触发，新增命中条目才触发且参数带入实体 token", () => {
+  it("event 触发：首轮基线不触发，新增命中条目才触发且参数带入实体 token", async () => {
     stack = buildDaemonStack();
     stack.makeJob({
       triggerType: "event",
@@ -184,7 +184,7 @@ describe("SchedulerDaemon 触发语义", () => {
     stack.feed.replaceFeedItems(USER, [
       { ...base, id: "a1", title: "比特币行情", entities: { token: "BTC" } },
     ]);
-    stack.daemon.tick(new Date()); // 基线
+    await stack.daemon.tick(new Date()); // 基线
     expect(stack.calls).toHaveLength(0);
 
     stack.feed.replaceFeedItems(USER, [
@@ -194,20 +194,20 @@ describe("SchedulerDaemon 触发语义", () => {
         entities: { token: "BONK", chain: "solana" },
       },
     ]);
-    stack.daemon.tick(new Date());
+    await stack.daemon.tick(new Date());
     expect(stack.calls).toHaveLength(1);
     expect(stack.calls[0]?.params.token).toBe("BONK");
   });
 
-  it("非法 job 在 tick 时被禁用且只通知一次，不落 failure JobRun", () => {
+  it("非法 job 在 tick 时被禁用且只通知一次，不落 failure JobRun", async () => {
     stack = buildDaemonStack();
     const job = stack.makeJob({
       triggerType: "time",
       triggerSpec: { every_minutes: 0 },
       nextFireAt: "2026-10-24T08:00:00.000Z",
     });
-    stack.daemon.tick(new Date());
-    stack.daemon.tick(new Date());
+    await stack.daemon.tick(new Date());
+    await stack.daemon.tick(new Date());
     expect(stack.jobs.getJob(job.id)?.enabled).toBe(false);
     const notes = stack.notifications
       .listNotifications(USER)
@@ -216,7 +216,7 @@ describe("SchedulerDaemon 触发语义", () => {
     expect(stack.jobs.listJobRuns(job.id)).toHaveLength(0);
   });
 
-  it("awaiting_approval 不算失败：JobRun 记 awaiting_approval 并通知，不重试", () => {
+  it("awaiting_approval 不算失败：JobRun 记 awaiting_approval 并通知，不重试", async () => {
     stack = buildDaemonStack();
     const job = stack.makeJob({
       triggerType: "time",
@@ -239,9 +239,9 @@ describe("SchedulerDaemon 触发语义", () => {
         runs += 1;
         return { runId: "r-await", status: "awaiting_approval" };
       },
-      sleeper: () => {},
+      sleeper: async () => {},
     });
-    const fired = daemon.tick(new Date("2026-10-24T10:00:00.000Z"));
+    const fired = await daemon.tick(new Date("2026-10-24T10:00:00.000Z"));
     expect(runs).toBe(1);
     expect(fired[0]?.status).toBe("awaiting_approval");
     expect(fired[0]?.runId).toBe("r-await");
@@ -255,7 +255,7 @@ describe("SchedulerDaemon 触发语义", () => {
 });
 
 describe("JobService 创建校验", () => {
-  it("非法 trigger 创建得 ValidationFailed 且不落库；合法创建 next_fire 在未来", () => {
+  it("非法 trigger 创建得 ValidationFailed 且不落库；合法创建 next_fire 在未来", async () => {
     stack = buildDaemonStack();
     const now = new Date().toISOString();
     stack.scripts.createScript({

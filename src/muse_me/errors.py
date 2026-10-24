@@ -36,6 +36,12 @@ class ValidationFailed(DemoError):
     code = "validation_failed"
 
 
+class ApprovalExpired(DemoError):
+    """审批已超过护栏的 approval_timeout_minutes 未决（HTTP 410）。"""
+
+    code = "approval_expired"
+
+
 # 别名（Error 后缀风格），同一类不另起炉灶
 NotFoundError = NotFound
 PermissionDeniedError = PermissionDenied

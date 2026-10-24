@@ -39,7 +39,7 @@ export class SettingsService {
       rows.push({
         name: "模型通道",
         status: "Mock 模拟模型（离线）",
-        detail: "设置 MUSE_ME_MODEL=openrouter 且提供 key 后切换真实模型",
+        detail: "控制面当前只提供确定性模拟回复，尚未接入真实模型配置面",
       });
     }
     const health = await this.deps.runtimeHealth();

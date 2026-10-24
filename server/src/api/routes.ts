@@ -41,6 +41,9 @@ export interface RouteDeps {
   feedStore: FeedStore;
   scriptStore: ScriptStore;
   userId: string;
+  /** 控制面护栏来源（批次三可观测）：loadGuardrailPolicy 的 source 与政策文件路径。 */
+  guardrailSource?: string;
+  guardrailPolicyPath?: string;
 }
 
 /** 路由汇总注册：一期链路（登录/聊天/审批/运行记录/事件流/AgentCore 管理）
@@ -59,7 +62,10 @@ export function registerRoutes(app: FastifyInstance, deps: RouteDeps): void {
     deps.scriptStore,
   );
   registerEventRoutes(app, deps.runStore);
-  registerAgentRoutes(app, deps.agentAdmin);
+  registerAgentRoutes(app, deps.agentAdmin, {
+    source: deps.guardrailSource,
+    policyPath: deps.guardrailPolicyPath,
+  });
   registerFeedRoutes(app, deps.feed, deps.prompts);
   registerScriptRoutes(app, deps.scripts, deps.chats, deps.chatStore, deps.feedStore);
   registerJobRoutes(app, deps.jobs);

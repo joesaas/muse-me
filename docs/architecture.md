@@ -3,6 +3,13 @@
 > 依据：《类 Muse 个人 Agent Demo · 项目报告 v1.2》。本文件是实现唯一依据；与报告冲突时先改报告再改本文件。
 > 项目默认名 muse-me（li 未另定名时用此名，改名只需改包名与标题，不影响结构）。
 
+## 定版决定（2026-10-24）：控制面与演进面
+
+- **Python API / 服务 / 调度层冻结产品演进**：只修安全问题与回归，不再加功能。
+- **后续演进面**：`server/` 控制面 + Python 的 `execution` / `harness` / `tools` / `agentcore_app`（即 Agent 本体部分）。
+- **Python 全栈保留作 legacy 回退入口**：Python 进程的同名 API 与静态托管保留，可作回退（DEPLOYMENT.md Step 2 口径）。
+- **形态 A / B 数据不连续**：两边各用各的 SQLite 库（DEPLOYMENT.md Step 2 口径：server 用自己的库 `server/data/server.db`，与 Python 的库互不干扰），切换形态不迁移历史数据——聊天、脚本、审批、任务、轨迹都不连续。**「回退」指代码入口回退，不是数据回退。**
+
 ## 1 设计原则（不可妥协）
 
 1. **SOLID + 迪米特法则**，但防过度设计：只为已知变化方向留接口（运行时、模型、存储、原子工具四处），其余写直。
@@ -89,7 +96,7 @@ SQLite 单文件（`data/muse_me.db`），表见报告 Step 5 + `scripts/script_
 
 ## 9 安全与护栏
 
-- Guardrails 从 `harness/guardrails/*.md` 的结构化区块读入：花费硬顶（每轮/每日 token 与模拟金额）、工具金额上限、风险分级表（read 自动 / write 攒批 / irreversible 单独确认）。
+- Guardrails 从 `harness/guardrails/policy.md` 的结构化区块读入：花费硬顶（每轮/每日 token 与模拟金额）、工具金额上限、风险分级表（read 自动 / write 攒批 / irreversible 单独确认）。**单真值源**：Python 与 server 启动时解析同一份 policy.md（server 经 `infrastructure/guardrails/policy-file.ts`，路径：`MUSE_ME_HARNESS_ROOT` 优先、其次自动向上查找）；组合根不再以硬编码常量作运行政策。**fail-closed 语义（两边一致）**：文件整体缺失、解析失败、缺必需键（四项金额/超时 + 三项风险级）或风险处置非法 → 限额归零、全部单独审批，不再静默回落出厂默认值。**审批超时**：待审批超过 policy 的 approval_timeout_minutes 未决即过期——decide 返回 410「审批已过期」且审批置 rejected、run 收口 failed；调度 tick 顺带清扫过期 pending。
 - 自建脚本沙箱 = 白名单 + 参数 schema 校验 + simulate 先行，三重。
 - 登录：单账户口令（环境变量 `MUSE_ME_PASSWORD`，默认 demo 口令仅本地），会话 cookie；Demo 级别足够，文档明示非生产强度。
 

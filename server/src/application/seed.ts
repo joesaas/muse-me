@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { DatabaseSync } from "node:sqlite";
 import type {
   ChatStore,
   FileStore,
@@ -8,7 +9,7 @@ import type {
   ScriptStore,
 } from "../domain/ports.js";
 import type { ScriptDoc, ScriptRecord } from "../domain/types.js";
-import { nowIso } from "../infrastructure/sqlite/database.js";
+import { nowIso, transaction } from "../infrastructure/sqlite/database.js";
 
 /**
  * 演示种子（移植 Python seed.py）：库中无脚本时一次性写入——
@@ -86,9 +87,38 @@ function makeScript(userId: string, doc: ScriptDoc): ScriptRecord {
   };
 }
 
-/** 库中已有脚本则整批跳过（返回 false）；完成播种返回 true。 */
+/** 带共享连接句柄的 store（Sqlite* store 均提供 database getter）。 */
+interface HasDatabase {
+  database?: DatabaseSync;
+}
+
+/**
+ * 从各 store 取共享连接：恰好一个时返回它（生产组合根的六个 store 共享
+ * 同一连接，故生产路径走事务，且无需改组合根）；无句柄（mock store）
+ * 或多连接时返回 undefined，调用方退化为顺序执行。
+ */
+function sharedDatabase(stores: SeedStores): DatabaseSync | undefined {
+  const handles = new Set<DatabaseSync>();
+  for (const store of Object.values(stores)) {
+    const handle = (store as HasDatabase).database;
+    if (handle) handles.add(handle);
+  }
+  return handles.size === 1 ? [...handles][0] : undefined;
+}
+
+/**
+ * 库中已有脚本则整批跳过（返回 false）；完成播种返回 true。
+ * 整批写入包在唯一共享连接的事务内：中途失败整批回滚，不留半份种子。
+ * 已有脚本的跳过判断在事务外做（只读，不开事务）。
+ */
 export function seedIfEmpty(stores: SeedStores, userId: string): boolean {
   if (stores.scripts.listScripts(userId).length > 0) return false;
+  const db = sharedDatabase(stores);
+  if (db) return transaction(db, () => seedIfEmptyBody(stores, userId));
+  return seedIfEmptyBody(stores, userId);
+}
+
+function seedIfEmptyBody(stores: SeedStores, userId: string): boolean {
   const now = nowIso();
 
   if (!stores.prompts.getPrompt(userId, "feed")) {

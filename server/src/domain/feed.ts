@@ -59,7 +59,6 @@ function pythonDictStr(obj: Record<string, unknown>): string {
 
 export type GeneratedFeedItem = Omit<FeedItemRecord, "userId" | "createdAt" | "promptVersion">;
 
-const BASE_DATE = "2026-10-23";
 
 /** 按提示词对全池打分生成精选条目（未落库；顺序为排名序，同 Python generate）。 */
 export function generateFeedItems(pool: RawNewsItem[], promptText: string): GeneratedFeedItem[] {
@@ -87,8 +86,8 @@ export function generateFeedItems(pool: RawNewsItem[], promptText: string): Gene
       url: String(raw.url ?? ""),
       topic: String(raw.topic ?? ""),
       entities,
-      publishedAt:
-        raw.publishedAt ?? `${BASE_DATE}T${String(8 + idx).padStart(2, "0")}:00:00+0800`,
+      // 无时间不编造：存 null，API 原样返回 null，前端显示「时间未知」。
+      publishedAt: raw.publishedAt ?? null,
     };
   });
 }

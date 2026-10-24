@@ -4,6 +4,8 @@
 产品功能（聊天/今日精选/我的脚本/定时任务/待我确认）、一套可替换的 Agent
 运行时、一套完整 Harness 工程（执行层/驾驭层/评估层）三部分齐全。
 
+> **定版决定（2026-10-24）**：Python API / 服务 / 调度层冻结产品演进（只修安全问题与回归，不再加功能）；后续演进面为 `server/` 控制面 + Python 的 `execution` / `harness` / `tools` / `agentcore_app`；Python 全栈保留作 legacy 回退入口。形态 A / B 数据不连续：两边各用各的 SQLite 库，切换形态不迁移历史数据（聊天、脚本、审批、任务、轨迹都不连续）；「回退」指代码入口回退、不是数据回退。部署口径见 `DEPLOYMENT.md`（Step 2：server 用自己的库 `server/data/server.db`，与 Python 的库互不干扰）。
+
 ## 架构（文字版）
 
 ```

@@ -43,12 +43,18 @@ export interface SchedulerDeps {
   tools: ToolRegistryPort;
   userId: string;
   runner: ScriptRunner;
+  /** 审批超时清扫（组合根注入 ApprovalService.expireStale；缺省则跳过，不改睡眠机制）。 */
+  sweepApprovals?: () => void;
   tickSeconds?: number;
   retryBackoffSeconds?: number;
   maxAttempts?: number;
   conditionCooldownSeconds?: number;
-  /** 退避睡眠（秒）；测试注入空实现。默认用 Atomics.wait 真睡（同 Python 口径）。 */
-  sleeper?: (seconds: number) => void;
+  /**
+   * 退避睡眠（秒）；测试注入 async 空实现。
+   * 批次三（BE-4）：必须是真异步——默认实现用 setTimeout 的 Promise，
+   * 不再用 Atomics.wait 阻塞事件循环（旧实现会让退避期间 /health 也无响应）。
+   */
+  sleeper?: (seconds: number) => Promise<void>;
 }
 
 const FAILURE_THROTTLE_SECONDS = 60.0;
@@ -62,14 +68,17 @@ const OPS: Record<string, (a: number, b: number) => boolean> = {
   "!=": (a, b) => a !== b,
 };
 
-function defaultSleeper(seconds: number): void {
-  if (seconds <= 0) return;
-  const buffer = new Int32Array(new SharedArrayBuffer(4));
-  Atomics.wait(buffer, 0, 0, Math.round(seconds * 1000));
+function defaultSleeper(seconds: number): Promise<void> {
+  if (seconds <= 0) return Promise.resolve();
+  return new Promise((resolve) => {
+    setTimeout(resolve, Math.round(seconds * 1000));
+  });
 }
 
 export class SchedulerDaemon {
   private timer: ReturnType<typeof setInterval> | null = null;
+  /** start() 轮次进行中标志：防重叠 tick（上一轮未跑完时跳过本轮，不排队）。 */
+  private tickInFlight = false;
   private readonly seenFeed = new Map<string, Set<string>>();
   private readonly conditionState = new Map<string, boolean>();
   private readonly lastConditionFire = new Map<string, number>();
@@ -80,7 +89,7 @@ export class SchedulerDaemon {
   private readonly retryBackoff: number;
   private readonly maxAttempts: number;
   private readonly conditionCooldown: number;
-  private readonly sleeper: (seconds: number) => void;
+  private readonly sleeper: (seconds: number) => Promise<void>;
 
   constructor(private readonly deps: SchedulerDeps) {
     this.tickSeconds = deps.tickSeconds ?? 1.0;
@@ -93,23 +102,29 @@ export class SchedulerDaemon {
   start(): void {
     if (this.timer) return;
     this.timer = setInterval(() => {
-      try {
-        this.tick();
-      } catch (err) {
-        // 守护不因单轮异常退出，但不许静默：写一条站内通知（60 秒节流防刷屏）。
-        const nowTs = Date.now() / 1000;
-        if (nowTs - this.lastDaemonErrorNote >= FAILURE_THROTTLE_SECONDS) {
-          this.lastDaemonErrorNote = nowTs;
-          try {
-            this.notifyRaw(
-              "调度守护异常",
-              `调度线程一轮执行出错：${err instanceof Error ? err.message : String(err)}`,
-            );
-          } catch {
-            // 通知本身失败不能拖垮守护
+      // 重叠轮次直接跳过（不排队、不并发跑同一批 job）；tick 的 promise
+      // 必须接住，防未处理 rejection 拖垮进程。
+      if (this.tickInFlight) return;
+      this.tickInFlight = true;
+      this.tick()
+        .catch((err) => {
+          // 守护不因单轮异常退出，但不许静默：写一条站内通知（60 秒节流防刷屏）。
+          const nowTs = Date.now() / 1000;
+          if (nowTs - this.lastDaemonErrorNote >= FAILURE_THROTTLE_SECONDS) {
+            this.lastDaemonErrorNote = nowTs;
+            try {
+              this.notifyRaw(
+                "调度守护异常",
+                `调度线程一轮执行出错：${err instanceof Error ? err.message : String(err)}`,
+              );
+            } catch {
+              // 通知本身失败不能拖垮守护
+            }
           }
-        }
-      }
+        })
+        .finally(() => {
+          this.tickInFlight = false;
+        });
     }, this.tickSeconds * 1000);
   }
 
@@ -124,8 +139,20 @@ export class SchedulerDaemon {
     return this.timer !== null;
   }
 
-  /** 处理全部 enabled 任务中已到触发条件的，返回本轮新建的 JobRun 列表。 */
-  tick(now: Date = new Date()): JobRunRecord[] {
+  /**
+   * 处理全部 enabled 任务中已到触发条件的，返回本轮新建的 JobRun 列表。
+   * 批次三：改为 async——任务执行之间 await 让出事件循环（微任务让位），
+   * 退避等待本身是 await 定时器，轮次不再独占线程；1 秒 tick 间隔、
+   * 重试次数与退避秒数语义不变。
+   */
+  async tick(now: Date = new Date()): Promise<JobRunRecord[]> {
+    if (this.deps.sweepApprovals) {
+      try {
+        this.deps.sweepApprovals();
+      } catch {
+        // 清扫失败不拖垮本轮任务执行，下轮重试
+      }
+    }
     const fired: JobRunRecord[] = [];
     for (const job of this.deps.jobs.listJobs(this.deps.userId)) {
       if (!job.enabled) continue;
@@ -135,7 +162,7 @@ export class SchedulerDaemon {
         continue;
       }
       try {
-        fired.push(...this.maybeFire(job, now));
+        fired.push(...(await this.maybeFire(job, now)));
       } catch (err) {
         const failure = this.recordFailure(
           job,
@@ -146,6 +173,8 @@ export class SchedulerDaemon {
         );
         if (failure) fired.push(failure);
       }
+      // 任务之间让出事件循环：本轮后续任务与外部请求（/health 等）可插空执行。
+      await Promise.resolve();
     }
     return fired;
   }
@@ -172,7 +201,7 @@ export class SchedulerDaemon {
 
   // ---------------- 触发判定 ----------------
 
-  private maybeFire(job: JobRecord, now: Date): JobRunRecord[] {
+  private async maybeFire(job: JobRecord, now: Date): Promise<JobRunRecord[]> {
     if (job.triggerType === "time") {
       const due = parseIso(job.nextFireAt);
       if (!due) {
@@ -183,7 +212,7 @@ export class SchedulerDaemon {
       if (due.getTime() <= now.getTime()) {
         job.nextFireAt = nextFire(job, now);
         this.deps.jobs.updateJob(job);
-        return [this.execute(job, { ...(job.params ?? {}) }, null, now)];
+        return [await this.execute(job, { ...(job.params ?? {}) }, null, now)];
       }
       return [];
     }
@@ -192,7 +221,7 @@ export class SchedulerDaemon {
     return [];
   }
 
-  private checkEvent(job: JobRecord, now: Date): JobRunRecord[] {
+  private async checkEvent(job: JobRecord, now: Date): Promise<JobRunRecord[]> {
     const keyword = String(job.triggerSpec.keyword ?? "").toLowerCase();
     const items = this.deps.feed.listFeedItems(this.deps.userId, 200);
     const currentIds = new Set(items.map((item) => item.id));
@@ -210,13 +239,13 @@ export class SchedulerDaemon {
         const params = { ...(job.params ?? {}) };
         const entity = { ...(item.entities ?? {}) };
         if (entity.token) params.token ??= entity.token;
-        fired.push(this.execute(job, params, entity, now));
+        fired.push(await this.execute(job, params, entity, now));
       }
     }
     return fired;
   }
 
-  private checkCondition(job: JobRecord, now: Date): JobRunRecord[] {
+  private async checkCondition(job: JobRecord, now: Date): Promise<JobRunRecord[]> {
     const current = this.evalCondition(job.triggerSpec ?? {});
     if (!this.conditionState.has(job.id)) {
       this.conditionState.set(job.id, current); // 首次只建基线（重启防重复执行）
@@ -230,7 +259,7 @@ export class SchedulerDaemon {
       return []; // 边沿被冷却吞掉（状态已更新，不补发）
     }
     this.lastConditionFire.set(job.id, now.getTime() / 1000);
-    return [this.execute(job, { ...(job.params ?? {}) }, null, now)];
+    return [await this.execute(job, { ...(job.params ?? {}) }, null, now)];
   }
 
   /**
@@ -270,12 +299,12 @@ export class SchedulerDaemon {
 
   // ---------------- 执行与重试 ----------------
 
-  private execute(
+  private async execute(
     job: JobRecord,
     params: Record<string, unknown>,
     entity: Record<string, unknown> | null,
     now: Date,
-  ): JobRunRecord {
+  ): Promise<JobRunRecord> {
     const stamp = now.toISOString();
     const script = this.deps.scripts.getScript(job.scriptId);
     const version = job.scriptVersion ?? script?.currentVersion ?? null;
@@ -331,7 +360,8 @@ export class SchedulerDaemon {
       jobRun.finishedAt = stamp;
       this.deps.jobs.addJobRun(jobRun);
       if (attempt < this.maxAttempts && this.retryBackoff > 0) {
-        this.sleeper(this.retryBackoff * 2 ** (attempt - 1));
+        // 真异步退避：await 定时器期间事件循环空闲，/health 等请求可正常响应。
+        await this.sleeper(this.retryBackoff * 2 ** (attempt - 1));
       }
       last = jobRun;
     }

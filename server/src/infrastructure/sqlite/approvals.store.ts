@@ -84,4 +84,14 @@ export class SqliteApprovalStore implements ApprovalStore {
       .run(decision, reason, nowIso(), id);
     return Number(result.changes) > 0;
   }
+
+  expireApproval(id: string, reason: string): boolean {
+    const result = this.db
+      .prepare(
+        `UPDATE approvals SET status = 'rejected', reason = ?, decided_at = ?
+         WHERE id = ? AND status = 'pending'`,
+      )
+      .run(reason, nowIso(), id);
+    return Number(result.changes) > 0;
+  }
 }

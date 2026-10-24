@@ -5,22 +5,23 @@ import type {
   RunSnapshotStore,
   RunStore,
   RuntimePort,
+  ToolRegistryPort,
 } from "../../domain/ports.js";
 import { assertRunTransition, isTerminalRunStatus } from "../../domain/run-state.js";
-import type {
-  ChatPlanSnapshot,
-  RunEventDraft,
-  RunEventRecord,
-  RunRecord,
-  SessionInfo,
+import {
+  actionForRisk,
+  DEFAULT_GUARDRAIL_POLICY,
+  TOOL_RISKS,
+  type ChatPlanSnapshot,
+  type GuardrailPolicy,
+  type RunEventDraft,
+  type RunEventRecord,
+  type RunRecord,
+  type SessionInfo,
 } from "../../domain/types.js";
 import { nowIso } from "../sqlite/database.js";
-import {
-  buildPlan,
-  runSimulatedTool,
-  type PlanStep,
-  type SimulatedPlan,
-} from "./simulated.js";
+import { buildPlan, type PlanStep, type SimulatedPlan } from "./simulated.js";
+import { SimulatedToolRegistry } from "../tools/simulated-tools.js";
 import { pollStoreEvents } from "./store-event-stream.js";
 
 interface SuspendedRun {
@@ -39,6 +40,13 @@ interface SuspendedRun {
  *
  * 二期：挂起时把续跑快照（计划/挂起步/已花费）同步落 RunSnapshotStore，
  * 进程内存 Map 降为缓存——server 重启后 awaiting 的 Run 仍可从快照重建续跑。
+ *
+ * 批次三（ARCH-2/BE-6）：工具单实现——执行改走注入的 ToolRegistryPort
+ * （组合根传 SimulatedToolRegistry，与脚本引擎同一注册表），不再用
+ * simulated.ts 的 runSimulatedTool；门位改按 TOOL_RISKS + actionForRisk
+ * 推导（与脚本引擎 gateSteps 同口径），不再读计划自带的 needsApproval。
+ * tools/policy 省略时回退默认注册表 + DEFAULT 政策（仅兼容旧的无参测试
+ * 构造；组合根永远显式注入真实政策，运行政策不取自默认值）。
  */
 export class LocalRuntime implements RuntimePort {
   private readonly sessions = new Map<string, SessionInfo>();
@@ -49,6 +57,8 @@ export class LocalRuntime implements RuntimePort {
   constructor(
     private readonly runs: RunStore,
     private readonly snapshots?: RunSnapshotStore,
+    private readonly tools: ToolRegistryPort = new SimulatedToolRegistry([]),
+    private readonly policy: GuardrailPolicy = DEFAULT_GUARDRAIL_POLICY,
   ) {}
 
   createSession(userId: string, scene = "chat"): SessionInfo {
@@ -113,7 +123,7 @@ export class LocalRuntime implements RuntimePort {
         return;
       }
       const stepDef = plan.steps[i];
-      if (stepDef.needsApproval && i !== skipApprovalIndex) {
+      if (this.requiresApproval(stepDef) && i !== skipApprovalIndex) {
         yield this.emit(runId, "approval_required", {
           step: String(i),
           label: stepDef.label,
@@ -148,7 +158,10 @@ export class LocalRuntime implements RuntimePort {
       tool: stepDef.tool,
       args: stepDef.args,
     });
-    runSimulatedTool(stepDef.tool, stepDef.args);
+    // 单实现：与脚本引擎同一注册表、同一 mode="simulate"。
+    // 步成本口径保持不变：仍记计划自带的 stepDef.costUsd，不改用
+    // 注册表结果里的 cost_usd（两者在 Aave 步上并不相等，见评审 BE-6 备注）。
+    this.tools.call(stepDef.tool, stepDef.args, "simulate");
     this.runs.addRunCost(runId, stepDef.costUsd);
     yield this.emit(runId, "step_done", {
       step: path,
@@ -216,6 +229,18 @@ export class LocalRuntime implements RuntimePort {
       sessions: this.sessions.size,
       suspended_runs: this.suspended.size,
     };
+  }
+
+  /**
+   * 门位推导（与 ScriptEngine.gateSteps 同口径）：
+   *   risk = TOOL_RISKS[tool] ?? "write"（查不到从严回退 write）
+   *   action = actionForRisk(policy, risk)
+   *   挂审批 ⟺ action !== "auto"
+   * 计划自带的 needsApproval 至此不再作为门位依据（计划形状不变，仅不读它）。
+   */
+  private requiresApproval(stepDef: PlanStep): boolean {
+    const risk = TOOL_RISKS[stepDef.tool] ?? "write";
+    return actionForRisk(this.policy, risk) !== "auto";
   }
 
   // ---------------- 内部 ----------------

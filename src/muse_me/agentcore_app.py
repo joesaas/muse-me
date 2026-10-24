@@ -32,14 +32,16 @@ agentcore-runtime.ts）：
   进程重启），请重新发起」），不伪装续跑。运行轨迹正本在控制面
   （控制面落 Run/RunEvent），Agent 侧不落任何持久化。
 
-规划场景归一（与控制面本地运行时同口径）：控制面的本地运行时计划器
-（server simulated.buildPlan）对「买入意图」在任意 scene 下都产脚本构建
-六步计划（scan→quote→审批 sim_swap）；Python MockModel 只在
-scene="script_build" 时产该计划、scene="chat" 只产查价一步。为保证
-AgentCore 与本地运行时同题同行为（验收第 10 条的口径），入口在
-scene != "script_build" 且 prompt 带买入意图（买 / meme / buy）时，
-按 script_build 场景向现有模型取计划——计划本身仍由模型产出，
-入口不自造步骤。
+规划场景直通（ARCH-3 批次三后，旧「买入归一」已删除）：Python
+MockModel.plan 已改为与控制面本地运行时计划器
+（server simulated.buildPlan）同语义——买入/Aave 意图在任意 scene
+下产同一计划，script_build 分支也在模型内部（见 llm.py 与
+tests/golden/plans.json）。因此入口不再把 scene 改写为
+script_build：改写在对齐后本是等价无操作，却会让 Plan.scene 与请求
+scene 不一致（说谎的场景字段），且对 OpenRouterModel 还会改写其
+plan 提示词里的场景描述、产出第三种语义。_plan_for 现为透明直通，
+计划本身仍由模型产出，入口不自造步骤；AgentCore 与本地运行时同题
+同行为（验收第 10 条的口径）改由 golden fixtures 两边共测保证。
 
 未装 SDK 时 import 本模块即抛带安装指引的 ImportError；主包其余导入
 路径不依赖本模块、不受影响。启动：
@@ -154,13 +156,14 @@ def _top_index(step_path: str) -> int | None:
 
 
 def _plan_for(model: Any, scene: str, prompt: str) -> Plan:
-    """向现有模型取计划；买入意图做场景归一（见模块 docstring 的口径说明）。"""
-    effective = scene
-    if scene != "script_build":
-        lowered = prompt.lower()
-        if "买" in prompt or "meme" in lowered or "buy" in lowered:
-            effective = "script_build"
-    return model.plan(effective, prompt)
+    """向现有模型取计划：透明直通，不改写 scene。
+
+    旧买入归一（非 script_build 且带买入意图时改按 script_build 取计划）
+    已在 ARCH-3 批次三删除：MockModel.plan 对齐 TS buildPlan 后，同一
+    prompt 在任何场景下计划已相同，归一是等价无操作；保留它只会让
+    Plan.scene 与请求 scene 不符。保留本函数仅作调用点，不增语义。
+    """
+    return model.plan(scene, prompt)
 
 
 def _drive(

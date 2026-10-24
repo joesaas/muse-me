@@ -1,10 +1,21 @@
 """模型适配：MockModel（默认、确定性）/ OpenRouterModel（可选，urllib 直连）。
 
 MockModel 的 complete 与 plan 均为确定性实现：同一输入同一输出，无随机、无网络。
-plan 返回 execution.Plan 结构，与场景口径对齐：
-- script_build：按脚本构建手册六步产计划（scan -> quote -> 审批前 sim_swap）。
-- chat：按目标中出现的标的决定是否查行情，否则空步计划（纯对话）。
-- feed_brief：news.search 一步。
+plan 返回 execution.Plan 结构，与 TS 正本
+server/src/infrastructure/runtime/simulated.ts 的 buildPlan 同语义
+（平价 golden 用例见 tests/golden/plans.json，两边测试共读同一份）：
+- 先判 Aave 意图（aave/利率/收益）：aave.rates -> 审批前 aave.sim_supply。
+- 再判买入意图（买/meme/buy）或 scene == "script_build"：meme.scan ->
+  dex.quote -> 审批前 dex.sim_swap（买入三步；script_build 分支保留是
+  因为 scripts_engine.build_draft 以 plan("script_build", haystack) 抽
+  token/金额，且 TS 正本同样有此分支）。
+- 否则有 token 则 market.quote 一步，无 token 则空计划。
+- 金额抽取与 TS findAmount 同口径：漏抽默认 100 并以
+  metadata["amount_defaulted"] 留痕（所有分支都带此标记，不再只在
+  script_build 分支留痕）。
+旧行为 feed_brief -> news.search 一步已取消：仓内无调用方/测试用
+feed_brief 场景取计划，TS 正本亦无此特判；feed_brief 输入今后走与
+其他场景相同的意图逻辑，不再由场景单独决定计划形状。
 OpenRouterModel 缺 API key 时在构造/调用时抛 DemoError 写明配置方法，不沉默降级。
 """
 from __future__ import annotations
@@ -92,36 +103,48 @@ class MockModel:
         return f"（模拟回复）已收到：{last[:80]}。我可以陪你把它变成可保存、可重跑的脚本。"
 
     def plan(self, scene: str, goal: str) -> Plan:
-        if scene == "script_build":
-            token = _find_token(goal) or "BONK"
-            amount, amount_defaulted = _find_amount(goal)
+        # 意图优先、与 TS buildPlan 同语义（分支顺序即优先级）：
+        # Aave > （买入意图 或 script_build 场景）> 有 token 查价 > 空计划。
+        # 金额与标的抽取口径与 TS findToken/findAmount 对齐（_find_token /
+        # _find_amount 的正则与默认值均与 TS 相同；已知 token 表的细微差
+        # 异见批次报告遗留项，不在 golden 用例覆盖范围内）。
+        lower = goal.lower()
+        amount, amount_defaulted = _find_amount(goal)
+        token = _find_token(goal)
+        metadata = {"planner": "mock", "amount_defaulted": amount_defaulted}
+        if "aave" in lower or "利率" in goal or "收益" in goal:
+            asset = token if (token and token != "AAVE") else "USDC"
             steps = [
-                tool_step("meme.scan", {"token": token}, save_as="scan",
+                tool_step("aave.rates", {"asset": asset}, save_as="rates",
+                          label="查 Aave 利率"),
+                tool_step("aave.sim_supply",
+                          {"asset": asset, "amount_usd": amount},
+                          save_as="supply", label="模拟存入",
+                          needs_approval=True),
+            ]
+            return _validate_plan(Plan(goal=goal, scene=scene, steps=steps,
+                                       metadata=metadata))
+        wants_buy = "买" in goal or "meme" in lower or "buy" in lower
+        if scene == "script_build" or wants_buy:
+            target = token or "BONK"
+            steps = [
+                tool_step("meme.scan", {"token": target}, save_as="scan",
                           label="查流动性与风险"),
-                tool_step("dex.quote", {"token": token, "amount_usd": amount},
+                tool_step("dex.quote", {"token": target, "amount_usd": amount},
                           save_as="quote", label="报价"),
-                tool_step("dex.sim_swap", {"token": token, "amount_usd": amount},
+                tool_step("dex.sim_swap",
+                          {"token": target, "amount_usd": amount},
                           save_as="swap", label="模拟成交", needs_approval=True),
             ]
-            # 金额漏抽用了默认值时在 metadata 留痕，不再静默猜（评审 P2）。
             return _validate_plan(Plan(
                 goal=goal, scene=scene, steps=steps,
-                metadata={"planner": "mock", "playbook": "script-building",
-                          "amount_defaulted": amount_defaulted}))
-        if scene == "feed_brief":
-            return _validate_plan(Plan(
-                goal=goal, scene=scene,
-                steps=[tool_step("news.search", {"query": goal[:20]}, save_as="news",
-                                 label="检索新闻池")],
-                metadata={"planner": "mock"},
-            ))
-        token = _find_token(goal)
-        steps: list[Step] = []
+                metadata={**metadata, "playbook": "script-building"}))
+        steps = []
         if token:
             steps.append(tool_step("market.quote", {"symbol": token},
                                    save_as="quote", label="查现价"))
         return _validate_plan(Plan(goal=goal, scene=scene, steps=steps,
-                                   metadata={"planner": "mock"}))
+                                   metadata=metadata))
 
 
 class OpenRouterModel:

@@ -150,6 +150,7 @@ def create_app(config: dict[str, Any] | None = None) -> App:
         user_id=user_id,
         tick_seconds=float(config.get("tick_seconds", 1.0)),
         retry_backoff=float(config.get("retry_backoff", 2.0)),
+        approval_sweeper=approvals.expire_stale,
     )
 
     seed_if_empty(store, user_id=user_id)

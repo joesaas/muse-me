@@ -1,29 +1,35 @@
 <script setup lang="ts">
 // 它记得的事：记忆列表 / 批准记住 / 不要记 / 删掉。
-import { onMounted, ref } from "vue";
+// 加载走统一三态；决策按钮只对 pending 显示（四维评审 FE-8，
+// 后端 decide 只许 pending，rejected 再点必然 409）；
+// 级别做 fact/inference/never 三值映射，never 不再标成「推测」。
+import { onMounted } from "vue";
 import { api } from "../api";
+import { useActionState, useAsyncList } from "../composables/useAsyncList";
+import { memoryLevelLabel, memoryStatusLabel } from "../labels";
 import type { MemoryItem } from "../types";
 
-const list = ref<MemoryItem[]>([]);
-
-async function loadMemories(): Promise<void> {
-  list.value = await api<MemoryItem[]>("/api/memories");
-}
+const memories = useAsyncList<MemoryItem>(() => api<MemoryItem[]>("/api/memories"));
+const action = useActionState();
 
 async function decide(m: MemoryItem, ok: boolean): Promise<void> {
-  await api(`/api/memories/${m.id}/decide`, {
-    method: "POST",
-    body: JSON.stringify({ approved: ok }),
+  await action.runAction(`decide-${m.id}`, async () => {
+    await api(`/api/memories/${m.id}/decide`, {
+      method: "POST",
+      body: JSON.stringify({ approved: ok }),
+    });
+    await memories.load();
   });
-  await loadMemories();
 }
 
 async function remove(m: MemoryItem): Promise<void> {
-  await api(`/api/memories/${m.id}`, { method: "DELETE" });
-  await loadMemories();
+  await action.runAction(`remove-${m.id}`, async () => {
+    await api(`/api/memories/${m.id}`, { method: "DELETE" });
+    await memories.load();
+  });
 }
 
-onMounted(loadMemories);
+onMounted(memories.load);
 </script>
 
 <template>
@@ -32,22 +38,27 @@ onMounted(loadMemories);
       <h2>它记得的事</h2>
       <span class="muted">推测类的内容要你批准后才算数</span>
     </div>
-    <div class="cards">
-      <div v-for="m in list" :key="m.id" class="card">
+    <p v-if="memories.loading.value" class="muted">正在加载记忆…</p>
+    <p v-else-if="memories.error.value" class="err">
+      记忆加载失败：{{ memories.error.value }} <button @click="memories.retry">重试</button>
+    </p>
+    <p v-else-if="!memories.items.value.length" class="muted">它还没有记住任何事。</p>
+    <div v-else class="cards">
+      <div v-for="m in memories.items.value" :key="m.id" class="card">
         <p>{{ m.content }}</p>
         <p>
-          <span class="tag">{{ m.level === "fact" ? "事实" : "推测" }}</span>
-          <span class="tag">{{ m.status === "active" ? "已生效" : m.status === "rejected" ? "已拒绝" : "等你批准" }}</span>
+          <span class="tag">{{ memoryLevelLabel(m.level) }}</span>
+          <span class="tag">{{ memoryStatusLabel(m.status) }}</span>
         </p>
         <div class="row">
-          <template v-if="m.status !== 'active'">
-            <button @click="decide(m, true)">批准记住</button>
-            <button @click="decide(m, false)">不要记</button>
+          <template v-if="m.status === 'pending'">
+            <button :disabled="action.busy.value !== null" @click="decide(m, true)">批准记住</button>
+            <button :disabled="action.busy.value !== null" @click="decide(m, false)">不要记</button>
           </template>
-          <button @click="remove(m)">删掉</button>
+          <button :disabled="action.busy.value !== null" @click="remove(m)">删掉</button>
         </div>
       </div>
-      <p v-if="!list.length" class="muted">它还没有记住任何事。</p>
     </div>
+    <p v-if="action.error.value" class="err">{{ action.error.value }}</p>
   </section>
 </template>

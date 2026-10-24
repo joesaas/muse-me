@@ -46,6 +46,11 @@ function toMessage(row: MessageRow): Message {
 export class SqliteChatStore implements ChatStore {
   constructor(private readonly db: DatabaseSync) {}
 
+  /** 共享连接句柄：seed 整批事务用（见 application/seed.ts）。 */
+  get database(): DatabaseSync {
+    return this.db;
+  }
+
   createChat(chat: Chat): void {
     this.db
       .prepare(

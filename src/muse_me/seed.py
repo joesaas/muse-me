@@ -67,9 +67,26 @@ AAVE_SCRIPT_DOC: dict[str, Any] = {
 def seed_if_empty(
     store: Any, user_id: str = DEFAULT_USER, now: datetime | None = None
 ) -> bool:
-    """库中已有脚本则跳过（返回 False）；完成播种返回 True。"""
+    """库中已有脚本则跳过（返回 False）；完成播种返回 True。
+
+    整批写入包在 store.transaction() 内（SqliteStore 提供；无该方法的
+    旧/fake store 退化为顺序写入）：中途失败整批回滚，不留半份种子。
+    已有脚本的跳过判断在事务外做（只读，不开事务）。
+    """
     if store.list_scripts(user_id):
         return False
+    tx = getattr(store, "transaction", None)
+    if callable(tx):
+        with tx():
+            _seed_if_empty_body(store, user_id, now)
+    else:
+        _seed_if_empty_body(store, user_id, now)
+    return True
+
+
+def _seed_if_empty_body(
+    store: Any, user_id: str, now: datetime | None
+) -> None:
     moment = now or datetime.now().astimezone()
 
     if store.get_prompt(user_id, "feed") is None:
@@ -101,4 +118,3 @@ def seed_if_empty(
     store.add_memory(MemoryItem(
         user_id=user_id, content="用户可能偏好 meme 赛道（待确认）。",
         level="inference", status="pending", source="seed"))
-    return True

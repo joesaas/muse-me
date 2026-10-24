@@ -147,10 +147,14 @@ class SchedulerDaemon:
         max_attempts: int = 3,
         condition_cooldown_seconds: float = 60.0,
         sleeper: Callable[[float], None] = time.sleep,
+        approval_sweeper: Callable[[Any], list] | None = None,
     ):
         self._store = store
         self._runner = script_runner
         self._registry = registry
+        # 审批超时清扫（组合根注入 ApprovalService.expire_stale；缺省则跳过，
+        # 不改睡眠/重试机制）。
+        self._approval_sweeper = approval_sweeper
         self._user_id = user_id
         self._clock = clock or SystemClock()
         self._tick_seconds = tick_seconds
@@ -214,6 +218,11 @@ class SchedulerDaemon:
     def tick(self, now: datetime | None = None) -> list[JobRun]:
         """处理全部 enabled 任务中已到触发条件的，返回本轮新建的 JobRun 列表。"""
         moment = self._now(now)
+        if self._approval_sweeper is not None:
+            try:
+                self._approval_sweeper(moment)
+            except Exception:
+                pass  # 清扫失败不拖垮本轮任务执行，下轮重试
         fired: list[JobRun] = []
         for job in self._store.list_jobs(self._user_id):
             if not job.enabled:

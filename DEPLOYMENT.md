@@ -25,7 +25,7 @@ PYTHONPATH=src python3 -m muse_me                      # 起服务
 ```
 
 - 打开 http://127.0.0.1:8765 ，口令 `demo` 登录。
-- 数据落在 SQLite 文件（默认仓库根 `data/` 下，可用 `MUSE_ME_DB` 指定）；备份就是拷这个文件。
+- 数据落在 SQLite 文件（默认仓库根 `data/` 下，可用 `MUSE_ME_DB` 指定）；备份就是拷这个文件。**注意 WAL**：server 的库开了 WAL 模式，热拷主文件会漏 -wal 里未落盘的页——备份前请先停服，或先对库执行 checkpoint 再拷贝。
 - 改了 `frontend/src/` 必须重跑 `npm run build`，否则页面是旧版。
 
 常用环境变量：
@@ -48,6 +48,7 @@ SERVER_PASSWORD=<自定义口令> npm start                 # 默认 127.0.0.1:8
 - 验证：`curl http://127.0.0.1:8787/api/agent/health` —— 未配 AWS 时应返回 `runtimeMode: "local"` 且 `agentcore.status: "not_configured"`，这是正常口径，不是报错。
 - server 用自己的库 `server/data/server.db`（`SERVER_DB` 可改），与 Python 的库互不干扰。
 - 前端由 server 同源托管（`web/`）并调用 server 的 API，已完成切换；Python 进程的同名 API 与静态托管保留，可作回退。
+- **调度所有者唯一**：同一时刻只许一个调度守护常驻——形态 A 的 Python 调度与形态 B 的 server 调度不要同时开（各扫各库的种子任务，会双跑）；只跑一种形态，或把不用的那侧用 `SERVER_SCHEDULER=0` / Python `start_scheduler: False` 关掉。
 
 ## Step 3 对外提供服务（绑非本机地址时必读）
 
@@ -126,7 +127,7 @@ SERVER_PASSWORD=<自定义口令> npm start
 | 启动报工具目录不一致 | harness/tools/catalog.md 与工具注册表漂移——这是有意的启动校验，修目录或注册表使之一致，不要关校验 |
 | health 显示 not_configured | 没配 `AGENTCORE_RUNTIME_ARN`/`AWS_REGION`，或 server 仍是 local 模式 |
 | 发消息无事件流 | 看执行记录里该 run 的状态与事件；服务日志查 `[api] internal error` |
-| 审批批准后没续跑 | server 形态下计划在进程内存中：控制面重启会丢 awaiting 中的运行，重新发起即可（已知限制，见 server README） |
+| 审批批准后没续跑 | 先看审批是否已过期：待审批超护栏超时（policy.md 的 approval_timeout_minutes，默认 60 分钟）未决即过期，decide 返回 410「审批已过期」且 run 收口 failed，需重新发起。server 形态下聊天计划快照已落库，控制面重启后 awaiting 的运行仍可续跑（第二期已根治进程内存丢失）；形态 C（AgentCore）的挂起态仍只在 microVM 内存，丢失不可恢复，只能重跑 |
 
 ## 环境变量总表
 

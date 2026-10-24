@@ -63,6 +63,11 @@ function toJobRun(row: JobRunRow): JobRunRecord {
 export class SqliteJobStore implements JobStore {
   constructor(private readonly db: DatabaseSync) {}
 
+  /** 共享连接句柄：seed 整批事务用（见 application/seed.ts）。 */
+  get database(): DatabaseSync {
+    return this.db;
+  }
+
   createJob(job: JobRecord): void {
     this.db
       .prepare(

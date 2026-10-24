@@ -22,6 +22,7 @@ from urllib.parse import parse_qs, urlparse
 
 from .domain import RunStatus
 from .errors import (
+    ApprovalExpired,
     DemoError,
     GuardrailDenied,
     InvalidTransition,
@@ -113,6 +114,8 @@ def error_status(exc: Exception) -> int:
         return 400
     if isinstance(exc, InvalidTransition):
         return 409
+    if isinstance(exc, ApprovalExpired):
+        return 410
     if isinstance(exc, RuntimeNotConfigured):
         return 503
     return 400

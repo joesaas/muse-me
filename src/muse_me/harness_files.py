@@ -1,7 +1,8 @@
 """驾驭层文件读取：harness/ 目录为正本（git 管理的 Markdown）。
 
 - load_guardrails()：解析 guardrails/policy.md 的 ```policy 代码块为 GuardrailPolicy。
-  文件缺失或解析失败时 fail-closed：返回 approval_default=deny 且金额/花费硬顶为 0 的策略。
+  文件缺失、解析失败、缺必需键或风险处置非法时一律 fail-closed：限额归零、
+  全部单独审批（approval_default=deny），不再静默回落出厂默认值。
 - assemble_context(scene)：按 scenarios/<scene>.md 的组装清单拼上下文
   （原则在最前，其次手册，再次工具目录）。
 - harness_version()：聚合 harness/ 全部正本文件（含 playbooks 手册）的内容哈希，
@@ -25,11 +26,26 @@ def default_harness_root() -> Path:
     return Path(__file__).resolve().parents[2] / "harness"
 
 
+# 护栏文件必需键：缺任一键即视为残缺，整体 fail-closed（不再用
+# dataclass 出厂默认值静默补齐）。风险处置只许这四个值。
+_REQUIRED_POLICY_KEYS = (
+    "max_cost_per_run_usd",
+    "max_cost_per_day_usd",
+    "max_sim_amount_usd",
+    "approval_timeout_minutes",
+)
+_REQUIRED_RISK_LEVELS = ("read", "write", "irreversible")
+_ALLOWED_ACTIONS = ("auto", "batch_approval", "single_approval", "deny")
+
+
 def _parse_policy_block(text: str) -> GuardrailPolicy:
     match = re.search(r"```policy\s*\n(.*?)```", text, re.DOTALL)
     if not match:
         raise DemoError("policy.md 缺少 ```policy 代码块")
     policy = GuardrailPolicy()
+    # 从空风险表起步：缺 risk_levels 段必须被检出，不能靠出厂默认值掩盖。
+    policy.risk_levels = {}
+    seen: set[str] = set()
     section: str | None = None
     for raw in match.group(1).splitlines():
         if not raw.strip() or raw.strip().startswith("#"):
@@ -44,6 +60,7 @@ def _parse_policy_block(text: str) -> GuardrailPolicy:
             section = key if value == "" else None
             if value == "":
                 continue
+            seen.add(key)
             if key == "max_cost_per_run_usd":
                 policy.max_cost_per_run_usd = float(value)
             elif key == "max_cost_per_day_usd":
@@ -56,17 +73,37 @@ def _parse_policy_block(text: str) -> GuardrailPolicy:
                 policy.approval_default = value
         elif section == "risk_levels":
             policy.risk_levels[key] = value
+    missing = [k for k in _REQUIRED_POLICY_KEYS if k not in seen]
+    missing_risks = [r for r in _REQUIRED_RISK_LEVELS
+                     if r not in policy.risk_levels]
+    if missing or missing_risks:
+        raise DemoError(
+            f"policy.md 残缺（缺键 {missing}、缺风险级 {missing_risks}），"
+            "拒绝以出厂默认值运行")
+    bad_actions = [r for r in _REQUIRED_RISK_LEVELS
+                   if policy.risk_levels[r] not in _ALLOWED_ACTIONS]
+    if bad_actions or policy.approval_default not in _ALLOWED_ACTIONS:
+        raise DemoError(
+            f"policy.md 风险处置非法（{bad_actions}、"
+            f"approval_default={policy.approval_default}），拒绝运行")
+    if policy.approval_timeout_minutes <= 0:
+        raise DemoError("policy.md 的 approval_timeout_minutes 须为正数")
     return policy
 
 
 def _fail_closed_policy() -> GuardrailPolicy:
-    """护栏不可读时的从严策略：一切需审批且限额为 0（架构 §1.3）。"""
+    """护栏不可读时的从严策略：限额归零、全部单独审批（架构 §1.3）。
+
+    注意：fail-closed 仍保留 approval_timeout_minutes=60（文档化默认值），
+    避免文件一丢就把全部待审批瞬间过期；过期语义见审批超时接线。
+    """
     return GuardrailPolicy(
         max_cost_per_run_usd=0.0,
         max_cost_per_day_usd=0.0,
         max_sim_amount_usd=0.0,
+        approval_timeout_minutes=60,
         risk_levels={
-            "read": "auto",
+            "read": "single_approval",
             "write": "single_approval",
             "irreversible": "single_approval",
         },

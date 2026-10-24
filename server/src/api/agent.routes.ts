@@ -6,12 +6,31 @@ import type {
 } from "../domain/ports.js";
 import { bodyOf } from "./auth.routes.js";
 
+/** 控制面护栏来源信息（组合根传入；不由 AgentAdminService 提供——
+ *  该服务只管 AgentCore/运行时健康，与控制面政策文件无关）。 */
+export interface GuardrailSourceInfo {
+  source?: string;
+  policyPath?: string;
+}
+
 /** AgentCore 管理薄控制器：健康 + Runtime 资源 CRUD，全部经 AgentAdminService。 */
 export function registerAgentRoutes(
   app: FastifyInstance,
   agentAdmin: AgentAdminService,
+  guardrail?: GuardrailSourceInfo,
 ): void {
-  app.get("/api/agent/health", async () => agentAdmin.health());
+  // /api/agent/health 在 AgentCore 健康之外合并控制面护栏来源：
+  // source 如实取自 loadGuardrailPolicy（file 或 fail-closed，不伪装），
+  // 未传入时不编造字段（组合根永远传入）。
+  app.get("/api/agent/health", async () => ({
+    ...(await agentAdmin.health()),
+    ...(guardrail?.source !== undefined
+      ? {
+          guardrailSource: guardrail.source,
+          guardrailPolicyPath: guardrail.policyPath ?? "",
+        }
+      : {}),
+  }));
 
   app.get("/api/agent/runtimes", async () => agentAdmin.listRuntimes());
 

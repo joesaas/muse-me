@@ -28,6 +28,11 @@ function toPrompt(row: PromptRow): PromptRecord {
 export class SqlitePromptStore implements PromptStore {
   constructor(private readonly db: DatabaseSync) {}
 
+  /** 共享连接句柄：seed 整批事务用（见 application/seed.ts）。 */
+  get database(): DatabaseSync {
+    return this.db;
+  }
+
   getPrompt(userId: string, key: string): PromptRecord | undefined {
     const row = this.db
       .prepare(

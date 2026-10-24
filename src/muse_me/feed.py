@@ -84,8 +84,6 @@ class SeedNews:
 class FeedGenerator:
     """按提示词生成 FeedItem 并落库（replace 本用户的精选列表）。"""
 
-    _BASE_DATE = "2026-10-23"
-
     def __init__(self, store: Any, news_source: SeedNews | None = None):
         self._store = store
         self._news = news_source or SeedNews()
@@ -122,8 +120,8 @@ class FeedGenerator:
                 url=str(raw.get("url", "")),
                 topic=str(raw.get("topic", "")),
                 entities=entities,
-                published_at=raw.get("published_at")
-                or f"{self._BASE_DATE}T{8 + idx:02d}:00:00+0800",
+                # 无时间不编造：存 None，API 原样返回 null，前端显示「时间未知」。
+                published_at=raw.get("published_at") or None,
                 prompt_version=prompt_version,
             )
             if is_fallback:

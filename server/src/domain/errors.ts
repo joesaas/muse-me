@@ -45,3 +45,10 @@ export class RuntimeNotConfigured extends AppError {
     super(message, 503);
   }
 }
+
+/** 审批已超过护栏超时未决（HTTP 410）。 */
+export class ApprovalExpired extends AppError {
+  constructor(message = "审批已过期") {
+    super(message, 410);
+  }
+}

@@ -30,6 +30,11 @@ function toFile(row: FileRow): FileRecord {
 export class SqliteFileStore implements FileStore {
   constructor(private readonly db: DatabaseSync) {}
 
+  /** 共享连接句柄：seed 整批事务用（见 application/seed.ts）。 */
+  get database(): DatabaseSync {
+    return this.db;
+  }
+
   addFile(input: {
     userId: string;
     name: string;

@@ -28,6 +28,11 @@ function toMemory(row: MemoryRow): MemoryRecord {
 export class SqliteMemoryStore implements MemoryStore {
   constructor(private readonly db: DatabaseSync) {}
 
+  /** 共享连接句柄：seed 整批事务用（见 application/seed.ts）。 */
+  get database(): DatabaseSync {
+    return this.db;
+  }
+
   addMemory(item: MemoryRecord): void {
     this.db
       .prepare(

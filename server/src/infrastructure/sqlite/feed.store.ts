@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { FeedStore } from "../../domain/ports.js";
 import type { FeedItemRecord } from "../../domain/types.js";
-import { nowIso } from "./database.js";
+import { nowIso, transaction } from "./database.js";
 import { parseJsonObject } from "./json.js";
 
 interface FeedRow {
@@ -38,21 +38,29 @@ function toItem(row: FeedRow): FeedItemRecord {
 export class SqliteFeedStore implements FeedStore {
   constructor(private readonly db: DatabaseSync) {}
 
+  /** 共享连接句柄：seed 整批事务用（见 application/seed.ts）。 */
+  get database(): DatabaseSync {
+    return this.db;
+  }
+
   replaceFeedItems(userId: string, items: FeedItemRecord[]): void {
-    this.db.prepare("DELETE FROM feed_items WHERE user_id = ?").run(userId);
-    const stmt = this.db.prepare(
-      `INSERT OR REPLACE INTO feed_items
+    // DELETE + 多插同一事务：中途失败旧数据仍在（不出现删完未插完的空窗）。
+    transaction(this.db, () => {
+      this.db.prepare("DELETE FROM feed_items WHERE user_id = ?").run(userId);
+      const stmt = this.db.prepare(
+        `INSERT OR REPLACE INTO feed_items
          (id, user_id, title, summary, source, url, topic, entities,
           published_at, prompt_version, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    );
-    for (const item of items) {
-      stmt.run(
-        item.id, userId, item.title, item.summary, item.source, item.url,
-        item.topic, JSON.stringify(item.entities ?? {}), item.publishedAt,
-        item.promptVersion, item.createdAt || nowIso(),
       );
-    }
+      for (const item of items) {
+        stmt.run(
+          item.id, userId, item.title, item.summary, item.source, item.url,
+          item.topic, JSON.stringify(item.entities ?? {}), item.publishedAt,
+          item.promptVersion, item.createdAt || nowIso(),
+        );
+      }
+    });
   }
 
   listFeedItems(userId: string, limit = 50): FeedItemRecord[] {
