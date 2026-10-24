@@ -53,7 +53,7 @@
 
 ## 4 前端（web/）
 
-源码在 `frontend/src/`（TypeScript，strict）：`types.ts` 是与 Python API 的契约（字段与后端 JSON 一一对应，后端改字段必须同步改此文件，由 tsc 拦截不一致）、`app.ts` 为逻辑（事件委托绑定，不用内联 onclick）。构建只有一步 `npm run build`（tsc），输出到 `web/`（index.html/style.css 为静态文件，app.js 为编译产物，不手改）。页面左侧一级菜单六个（聊天、今日精选、我的脚本、定时任务、待我确认[角标]、我的文件），「更多」收执行记录、它记得的事、账号与连接。无框架；fetch + EventSource。
+源码在 `frontend/src/`（Vue 3 + TypeScript，strict，Vite 构建）：`types.ts` 是与 Python API 的契约（字段与后端 JSON 一一对应，后端改字段必须同步改此文件，由 vue-tsc 拦截不一致）；结构为 `App.vue`（登录门+侧栏布局）、`views/` 九个视图组件、`stores/app.ts`（Pinia：登录态与待审批角标轮询）、`composables/useRunStream.ts`（EventSource 订阅，断线指数退避重连）、`api.ts`（fetch 封装）。构建只有一步 `npm run build`（vue-tsc 校验 + vite build），输出到 `web/`（index.html + assets/ 为构建产物，不手改）。后端静态服务无 SPA fallback，路由用 hash 模式（Vue Router createWebHashHistory）。页面左侧一级菜单六个（聊天、今日精选、我的脚本、定时任务、待我确认[角标]、我的文件），「更多」收执行记录、它记得的事、账号与连接。fetch + EventSource。
 
 每页最小功能：
 - 聊天：会话列表（主聊/新话题徽标）、消息流、流式渲染、运行中可停、工具调用折叠卡。

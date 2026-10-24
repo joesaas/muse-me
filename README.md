@@ -7,7 +7,7 @@
 ## 架构（文字版）
 
 ```
-Web 前端（TypeScript SPA，六个小白菜单） ── REST + SSE ──┐
+Web 前端（Vue 3 + TypeScript SPA，六个小白菜单） ── REST + SSE ──┐
 API 层（http.server：路由 / 口令登录 / SSE 事件流 / 静态文件）
 应用服务层（services.py）
   ChatService / ScriptService / JobService / FeedService
@@ -36,7 +36,7 @@ PYTHONPATH=src python3 -m muse_me
 # 真实模型：MUSE_ME_MODEL=openrouter 且设置 OPENROUTER_API_KEY（默认 Mock 离线模型）
 ```
 
-前端（TypeScript，改 `frontend/src/` 后需重新构建，产物输出到 `web/`）：
+前端（Vue 3 + Vite + TypeScript，改 `frontend/src/` 后需重新构建，产物输出到 `web/`）：
 
 ```bash
 cd frontend && npm install && npm run build

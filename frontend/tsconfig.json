@@ -1,15 +1,1 @@
-{
-  "compilerOptions": {
-    "target": "ES2022",
-    "module": "ES2022",
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "strict": true,
-    "noUncheckedIndexedAccess": true,
-    "forceConsistentCasingInFileNames": true,
-    "outDir": "../web",
-    "rootDir": "src",
-    "declaration": false,
-    "sourceMap": false
-  },
-  "include": ["src"]
-}
+{"compilerOptions":{"forceConsistentCasingInFileNames":true,"isolatedModules":true,"lib":["ES2022","DOM","DOM.Iterable"],"module":"ESNext","moduleResolution":"bundler","noEmit":true,"noUncheckedIndexedAccess":true,"paths":{"@/*":["./src/*"]},"skipLibCheck":true,"strict":true,"target":"ES2022","types":["vite/client"],"useDefineForClassFields":true},"include":["src","vite.config.ts","env.d.ts"]}

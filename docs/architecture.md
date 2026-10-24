@@ -16,7 +16,7 @@
 ## 2 系统分层
 
 ```
-┌ Web 前端（TypeScript SPA，六个小白菜单） ─ REST + SSE ─┐
+┌ Web 前端（Vue 3 + TypeScript SPA，六个小白菜单） ─ REST + SSE ─┐
 ├ API 层（http.server，路由/鉴权/SSE 事件流）        │
 ├ 应用服务层 AppServices                            │
 │   ChatService / ScriptService / JobService        │
@@ -103,7 +103,7 @@ SQLite 单文件（`data/muse_me.db`），表见报告 Step 5 + `scripts/script_
 | 项 | 选型 | 理由 |
 |---|---|---|
 | 语言 | Python 3.12 标准库零依赖 | 与 muse-agent 先例一致；无安装风险；可维护 |
-| Web | http.server 后端 + TypeScript 前端（Vite-less，tsc 编译） | 前端与后端契约靠 types.ts 在编译期对齐；运行时仍零框架、零构建产物依赖（web/ 为编译输出） |
+| Web | http.server 后端 + Vue 3 前端（Vite 构建，Pinia + Vue Router，hash 路由） | 前端与后端契约靠 types.ts 在编译期对齐（vue-tsc strict）；后端静态服务无 SPA fallback，故路由用 hash 模式、产物输出 web/ 由后端直读托管 |
 | 存储 | sqlite3（标准库） | 单人 Demo 足够；StorePort 隔离可换 PG |
 | 模型 | MockModel 默认；OpenRouterModel 可选（urllib） | 离线可演示；真模型一键切换 |
 | 测试 | unittest（标准库） | 零依赖；`python -m unittest discover` |

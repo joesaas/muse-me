@@ -1,5 +1,5 @@
 // 与 Python API 的契约类型：字段名与后端 JSON 一一对应（细节设计 §3）。
-// 后端改字段必须同步改这里，tsc 会把不一致拦在编译期。
+// 后端改字段必须同步改这里，vue-tsc 会把不一致拦在编译期。
 
 export interface Chat {
   id: string;
@@ -61,6 +61,24 @@ export interface Script {
   params: ScriptParam[];
 }
 
+// 脚本试运行/正式运行的返回：字段按 scripts_engine.run_script 的 finish() 构造
+// （run_id/status/facts/steps/spent_usd，外加 awaiting 时的 approval_id、失败时的 error）。
+export interface ScriptRunStep {
+  step: number;
+  tool: string;
+  result: Record<string, unknown>;
+}
+
+export interface ScriptRunResult {
+  run_id: string;
+  status: "done" | "awaiting_approval" | "failed" | string;
+  facts: Record<string, unknown>;
+  steps: ScriptRunStep[];
+  spent_usd: number;
+  approval_id?: string;
+  error?: string;
+}
+
 export type Trigger =
   | { type: "time"; every_minutes?: number; cron_daily?: string }
   | { type: "event"; keyword: string }
@@ -106,7 +124,8 @@ export interface MemoryItem {
   id: string;
   content: string;
   level: "fact" | "inference" | "never";
-  status: "active" | "pending";
+  // 评审修复：decide 接口可返回被拒绝的记忆，联合须含 "rejected"。
+  status: "active" | "pending" | "rejected";
 }
 
 export interface Connection {
