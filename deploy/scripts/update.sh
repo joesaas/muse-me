@@ -9,7 +9,7 @@ set -euo pipefail
 REBUILD=0
 [ "${1:-}" = "--rebuild" ] && REBUILD=1
 
-REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+REPO_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$REPO_DIR"
 STAMP="$(date +%F-%H%M%S)"
 BACKUP_DIR="$REPO_DIR/backups/$STAMP"

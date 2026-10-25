@@ -48,7 +48,7 @@ while [ $# -gt 0 ]; do
 done
 [ "$FORM" = "a" ] || [ "$FORM" = "b" ] || { echo "FORM 只能是 a 或 b" >&2; exit 1; }
 
-REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+REPO_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 ENV_FILE="$HOME/.config/museme/museme.env"
 UNIT_DIR="$HOME/.config/systemd/user"
 

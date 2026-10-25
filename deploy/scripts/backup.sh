@@ -5,7 +5,7 @@
 # 用法（仓库根目录）：bash deploy/scripts/backup.sh
 set -euo pipefail
 
-REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+REPO_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$REPO_DIR"
 STAMP="$(date +%F-%H%M%S)"
 BACKUP_DIR="$REPO_DIR/backups/$STAMP"
