@@ -1,5 +1,8 @@
 <script setup lang="ts">
-// 顶层布局：登录门 + 侧栏菜单（六个一级小白名 +「更多」三项）+ RouterView。
+// 顶层布局：登录门 + 三栏（左栏导航 + 中间 RouterView + 右栏审批/运行历史/个人指纹）。
+// 左栏只留与用户直接相关的四项：聊天、今日精选、插件（脚本）、文库（文件）；
+// 待我确认与执行记录移到右栏，定时任务挂在右栏运行历史表头，
+// 它记得的事与账号与连接挂在右栏个人指纹区——路由都在，入口换了位置。
 // 登录态由 Pinia store 持有；登录探测只把 401 当作未登录，
 // 其它错误（500/断网）显示「服务暂时连不上」而不是误判为未登录（四维评审 FE-12）。
 // 菜单高亮按路径前缀判定（四维评审 FE-4 选型）：/chat 与 /chat/:id 是同级路由记录，
@@ -7,6 +10,7 @@
 import { onMounted, ref } from "vue";
 import { RouterLink, RouterView, useRoute } from "vue-router";
 import { api, ApiError } from "./api";
+import RightPanel from "./components/RightPanel.vue";
 import { useAppStore } from "./stores/app";
 import type { Chat } from "./types";
 
@@ -19,15 +23,8 @@ const probeError = ref(false);
 const mainMenu = [
   { to: "/chat", label: "💬 聊天" },
   { to: "/feed", label: "📰 今日精选" },
-  { to: "/scripts", label: "🧰 我的脚本" },
-  { to: "/jobs", label: "⏰ 定时任务" },
-  { to: "/approvals", label: "✅ 待我确认", badge: true },
-  { to: "/files", label: "📁 我的文件" },
-];
-const moreMenu = [
-  { to: "/runs", label: "📜 执行记录" },
-  { to: "/memories", label: "🧠 它记得的事" },
-  { to: "/settings", label: "🔗 账号与连接" },
+  { to: "/scripts", label: "🧩 插件" },
+  { to: "/files", label: "📚 文库" },
 ];
 
 function isMenuActive(to: string): boolean {
@@ -88,19 +85,13 @@ async function login(): Promise<void> {
         <RouterLink v-for="m in mainMenu" :key="m.to" :to="m.to" custom v-slot="{ navigate }">
           <button :class="{ active: isMenuActive(m.to) }" @click="navigate">
             {{ m.label }}
-            <span v-if="m.badge && store.pendingCount" class="badge">{{ store.pendingCount }}</span>
           </button>
         </RouterLink>
       </nav>
-      <div class="more">
-        <div class="more-title">更多</div>
-        <RouterLink v-for="m in moreMenu" :key="m.to" :to="m.to" custom v-slot="{ navigate }">
-          <button :class="{ active: isMenuActive(m.to) }" @click="navigate">{{ m.label }}</button>
-        </RouterLink>
-      </div>
     </aside>
     <main class="main">
       <RouterView />
     </main>
+    <RightPanel />
   </div>
 </template>
