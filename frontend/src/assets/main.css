@@ -43,3 +43,16 @@ input[type=text],input[type=number]{border:1px solid #d4d9e2;border-radius:8px;p
 .ritem.muted-item{opacity:.75}
 .rrow{display:flex;gap:6px;margin-top:8px}
 @media (max-width:1100px){.right{display:none}}
+.feed-col{max-width:680px;margin:0 auto}
+.feed-item{padding:22px 0;border-bottom:1px solid #e8ebf1}
+.feed-item:last-child{border-bottom:none}
+.feed-head{display:flex;gap:12px;align-items:flex-start}
+.feed-avatar{width:36px;height:36px;flex-shrink:0;border-radius:50%;background:#eef2ff;color:#2b4acb;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px}
+.feed-title{flex:1;margin:0;font-size:18px;line-height:1.4}
+.feed-time{flex-shrink:0;color:#7a8499;font-size:13px;white-space:nowrap;padding-top:2px}
+.feed-summary{margin:10px 0 8px 48px;font-size:15px;line-height:1.7}
+.feed-tags{margin:0 0 4px 48px}
+.feed-meta{margin:4px 0 0 48px}
+.feed-actions{margin:12px 0 0 48px;display:flex;gap:8px;align-items:center}
+.feed-actions button.quiet{background:transparent;border:none;color:#54607a;padding:6px 4px}
+.feed-actions button.quiet:hover{color:#2b4acb}

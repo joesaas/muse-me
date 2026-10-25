@@ -59,6 +59,25 @@ async function rollbackPrompt(): Promise<void> {
   await feed.load();
 }
 
+// 截图版式的时间写法：相对时间（1 小时前 / 2 天前），解析失败回落原文、无时间回落「时间未知」。
+function relativeTime(iso?: string): string {
+  if (!iso) return "时间未知";
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return iso;
+  const mins = Math.max(0, Math.floor((Date.now() - t) / 60000));
+  if (mins < 1) return "刚刚";
+  if (mins < 60) return `${mins} 分钟前`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours} 小时前`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days} 天前`;
+  return iso;
+}
+
+function sourceInitial(item: FeedItem): string {
+  return (item.source?.trim().charAt(0) ?? "") || "精";
+}
+
 async function startChat(item: FeedItem, act: "ask" | "build"): Promise<void> {
   const payload =
     act === "build"
@@ -78,7 +97,7 @@ onMounted(feed.load);
 </script>
 
 <template>
-  <section class="view">
+  <section class="view feed-col">
     <div class="bar">
       <h2>今日精选</h2>
       <button class="ghost" @click="togglePrompt">我想看什么</button>
@@ -98,19 +117,23 @@ onMounted(feed.load);
       精选加载失败：{{ feed.error.value }} <button @click="feed.retry">重试</button>
     </p>
     <p v-else-if="!feed.items.value.length" class="muted">今天还没有精选，点「刷新精选」试试。</p>
-    <div v-else class="cards">
-      <div v-for="f in feed.items.value" :key="f.id" class="card">
-        <h3>{{ f.title }}</h3>
-        <p>{{ f.summary }}</p>
-        <p>
+    <div v-else>
+      <article v-for="f in feed.items.value" :key="f.id" class="feed-item">
+        <div class="feed-head">
+          <span class="feed-avatar" :title="f.source ?? ''">{{ sourceInitial(f) }}</span>
+          <h3 class="feed-title">{{ f.title }}</h3>
+          <span class="feed-time">{{ relativeTime(f.published_at) }}</span>
+        </div>
+        <p class="feed-summary">{{ f.summary }}</p>
+        <p v-if="(f.entities || []).length" class="feed-tags">
           <span v-for="(e, i) in f.entities || []" :key="i" class="tag">{{ e.label || e.value }}</span>
         </p>
-        <p class="muted">{{ f.source }} · {{ f.published_at ?? "时间未知" }}</p>
-        <div class="row">
-          <button @click="startChat(f, 'ask')">追问</button>
+        <p v-if="f.source" class="muted feed-meta">{{ f.source }}</p>
+        <div class="feed-actions">
+          <button class="quiet" @click="startChat(f, 'ask')">💬 追问</button>
           <button @click="startChat(f, 'build')">基于此构建脚本</button>
         </div>
-      </div>
+      </article>
     </div>
   </section>
 </template>
