@@ -24,6 +24,8 @@ bash deploy/scripts/setup.sh --form a --password <口令>   # 不给则交互式
 
 setup.sh 依次做：环境检查（形态 A 要 Python ≥ 3.11 且 `web/index.html` 已存在；形态 B 要 Node ≥ 22 并自动 `npm install + build`）→ 口令写进 `~/.config/museme/museme.env`（600，不进仓库）→ 装 systemd 用户服务并 `enable-linger`（退出登录后继续跑）→ 把对应形态的 nginx 站点链进 `sites-enabled` 并 `nginx -t` 后 reload → 本机探活验证。
 
+Python 版本说明：云镜像自带的 python3 常是 3.9/3.10，不要替换它（会动系统工具），只需另装一个 3.11+，setup.sh 会自动挑到（依次试 python3、python3.13、python3.12、python3.11），也可显式指定 `PYTHON_BIN=python3.12`。各系统安装命令见 setup.sh 报错时的提示。
+
 做完后你那边只剩两件事：安全组放行 80（与 443），浏览器打开 `http://<服务器公网 IP>/` 用口令登录。
 
 ## 日常运维

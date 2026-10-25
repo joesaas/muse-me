@@ -7,6 +7,8 @@
 #
 # 口令不写进本文件，改从 EnvironmentFile 读（setup.sh 生成，权限 600）：
 #   ~/.config/museme/museme.env  内含 MUSE_ME_PASSWORD=<自定义口令>
+# ExecStart 里的 /usr/bin/python3 是占位：setup.sh 安装时会换成实际挑到的 3.11+ 解释器
+# （系统 python3 常是 3.9，不能直接用），不要手动改成系统 python3。
 [Unit]
 Description=MuseMe (form A: Python full stack)
 After=network-online.target
