@@ -51,6 +51,43 @@ export const TOOL_CATALOG: readonly ToolDef[] = [
     description: "站内通知",
     params: { title: "string", body: "string" },
   },
+  // ---- OKX 交易所（真实 API；执行环境由 OKX 配置定：默认模拟盘） ----
+  {
+    name: "okx.balance",
+    risk: "read",
+    description: "OKX 账户余额（模拟盘/实盘由配置定）",
+    params: { ccy: "string?" },
+  },
+  {
+    name: "okx.ticker",
+    risk: "read",
+    description: "OKX 行情现价（公开接口，无需密钥）",
+    params: { inst_id: "string" },
+  },
+  {
+    name: "okx.positions",
+    risk: "read",
+    description: "OKX 持仓（默认永续）",
+    params: { inst_type: "string?" },
+  },
+  {
+    name: "okx.order",
+    risk: "read",
+    description: "OKX 订单详情",
+    params: { inst_id: "string", ord_id: "string" },
+  },
+  {
+    name: "okx.spot_order",
+    risk: "irreversible",
+    description: "OKX 现货市价下单（买入按 USDT 金额，卖出按金额折算币量）",
+    params: { inst_id: "string", side: "string", amount_usd: "number" },
+  },
+  {
+    name: "okx.perp_order",
+    risk: "irreversible",
+    description: "OKX 永续市价开仓（做多/做空，金额折算张数）",
+    params: { inst_id: "string", side: "string", amount_usd: "number" },
+  },
 ];
 
 export const TOOL_DEFS: ReadonlyMap<string, ToolDef> = new Map(

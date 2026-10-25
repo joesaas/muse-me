@@ -76,7 +76,7 @@ const MEME_DOC: ScriptDoc = {
 };
 
 describe("脚本引擎：金额护栏（评审必修口径）", () => {
-  it("引号金额拦截：string 参数喂入 amount_usd，先数值化再比上限，超限 GuardrailDenied 且轨迹留痕", () => {
+  it("引号金额拦截：string 参数喂入 amount_usd，先数值化再比上限，超限 GuardrailDenied 且轨迹留痕", async () => {
     stack = buildStack();
     const script = makeScript({
       name: "引号金额脚本",
@@ -87,7 +87,7 @@ describe("脚本引擎：金额护栏（评审必修口径）", () => {
         args: { token: "BONK", amount_usd: "${amt}" },
       },
     });
-    expect(() => stack.service.run(script.id)).toThrow(GuardrailDenied);
+    await expect(stack.service.run(script.id)).rejects.toThrow(GuardrailDenied);
     const run = stack.runs.listRuns(USER)[0]!;
     expect(run.status).toBe("failed");
     const failed = stack.runs
@@ -97,7 +97,7 @@ describe("脚本引擎：金额护栏（评审必修口径）", () => {
     expect(String(failed?.payload.error)).toContain("超过模拟上限");
   });
 
-  it("非数值字符串金额：数值化失败即护栏拒绝（不是把字符串当 0 放行）", () => {
+  it("非数值字符串金额：数值化失败即护栏拒绝（不是把字符串当 0 放行）", async () => {
     stack = buildStack();
     const script = makeScript({
       name: "乱码金额脚本",
@@ -108,7 +108,7 @@ describe("脚本引擎：金额护栏（评审必修口径）", () => {
         args: { token: "BONK", amount_usd: "${amt}" },
       },
     });
-    expect(() => stack.service.run(script.id)).toThrow(GuardrailDenied);
+    await expect(stack.service.run(script.id)).rejects.toThrow(GuardrailDenied);
     const run = stack.runs.listRuns(USER)[0]!;
     expect(run.status).toBe("failed");
     const failed = stack.runs
@@ -117,7 +117,7 @@ describe("脚本引擎：金额护栏（评审必修口径）", () => {
     expect(String(failed?.payload.error)).toContain("需要数字");
   });
 
-  it("限额内的引号金额被数值化后正常走到门位挂起，批准后续跑完成", () => {
+  it("限额内的引号金额被数值化后正常走到门位挂起，批准后续跑完成", async () => {
     stack = buildStack();
     const script = makeScript({
       name: "限额内引号金额",
@@ -128,7 +128,7 @@ describe("脚本引擎：金额护栏（评审必修口径）", () => {
         args: { token: "BONK", amount_usd: "${amt}" },
       },
     });
-    const first = stack.service.run(script.id);
+    const first = await stack.service.run(script.id);
     expect(first.status).toBe("awaiting_approval");
     const pending = stack.approvals.listApprovals(USER, "pending");
     expect(pending).toHaveLength(1);
@@ -138,7 +138,7 @@ describe("脚本引擎：金额护栏（评审必修口径）", () => {
     // RUNNING 再在门位返回 awaiting（状态留在 running），该路径经 API 不可达
     // （审批 decide 永远先于 resume），此处只走真实链路：先决策再续跑。
     stack.approvals.decideApproval(pending[0]!.id, "approved", "");
-    const done = stack.service.resume(first.run_id);
+    const done = await stack.service.resume(first.run_id);
     expect(done.status).toBe("done");
     expect(stack.runs.getRun(first.run_id)?.status).toBe("done");
   });
@@ -191,10 +191,10 @@ describe("脚本引擎：DSL 校验", () => {
 });
 
 describe("脚本引擎：试运行与版本钉住", () => {
-  it("trial 不建审批不挂起，全程模拟跑完并产出 facts/steps", () => {
+  it("trial 不建审批不挂起，全程模拟跑完并产出 facts/steps", async () => {
     stack = buildStack();
     const script = makeScript(MEME_DOC);
-    const result = stack.service.trial(script.id);
+    const result = await stack.service.trial(script.id);
     expect(result.status).toBe("done");
     expect(result.steps).toHaveLength(3);
     expect(Object.keys(result.facts).sort()).toEqual(["quote", "scan"]);
@@ -202,14 +202,14 @@ describe("脚本引擎：试运行与版本钉住", () => {
     expect(stack.approvals.listApprovals(USER)).toHaveLength(0);
   });
 
-  it("正式运行停在门位；resume 前置：非 awaiting 的 run 续跑抛 InvalidTransition", () => {
+  it("正式运行停在门位；resume 前置：非 awaiting 的 run 续跑抛 InvalidTransition", async () => {
     stack = buildStack();
     const script = makeScript(MEME_DOC);
-    const trialResult = stack.service.trial(script.id);
-    expect(() => stack.service.resume(trialResult.run_id)).toThrow(InvalidTransition);
+    const trialResult = await stack.service.trial(script.id);
+    await expect(stack.service.resume(trialResult.run_id)).rejects.toThrow(InvalidTransition);
   });
 
-  it("按版本运行用钉住版本的 doc（plan_created 的 steps 来自旧版本）", () => {
+  it("按版本运行用钉住版本的 doc（plan_created 的 steps 来自旧版本）", async () => {
     stack = buildStack();
     const script = makeScript(MEME_DOC); // v1：3 步
     const edited: ScriptRecord = {
@@ -223,7 +223,7 @@ describe("脚本引擎：试运行与版本钉住", () => {
       },
     };
     stack.scripts.updateScript(edited); // → v2（2 步）
-    const result = stack.service.run(script.id, { version: 1, trial: true });
+    const result = await stack.service.run(script.id, { version: 1, trial: true });
     expect(result.status).toBe("done");
     expect(result.steps).toHaveLength(3); // 跑的是 v1 的 doc
     const plan = stack.runs

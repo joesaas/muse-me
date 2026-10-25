@@ -7,6 +7,7 @@ import type { FeedService } from "../application/feed.service.js";
 import type { FileService } from "../application/file.service.js";
 import type { JobService } from "../application/job.service.js";
 import type { MemoryService } from "../application/memory.service.js";
+import type { PluginService } from "../application/plugin.service.js";
 import type { PromptService } from "../application/prompt.service.js";
 import type { ScriptService } from "../application/script.service.js";
 import type { SettingsService } from "../application/settings.service.js";
@@ -21,6 +22,7 @@ import { registerJobRoutes } from "./jobs.routes.js";
 import { registerMemoryRoutes } from "./memories.routes.js";
 import { registerRunRoutes } from "./runs.routes.js";
 import { registerScriptRoutes } from "./scripts.routes.js";
+import { registerPluginRoutes } from "./plugins.routes.js";
 import { registerSettingsRoutes } from "./settings.routes.js";
 import { registerEventRoutes } from "./sse.js";
 
@@ -32,6 +34,7 @@ export interface RouteDeps {
   feed: FeedService;
   prompts: PromptService;
   scripts: ScriptService;
+  plugins: PluginService;
   jobs: JobService;
   memories: MemoryService;
   files: FileService;
@@ -68,6 +71,7 @@ export function registerRoutes(app: FastifyInstance, deps: RouteDeps): void {
   });
   registerFeedRoutes(app, deps.feed, deps.prompts);
   registerScriptRoutes(app, deps.scripts, deps.chats, deps.chatStore, deps.feedStore);
+  registerPluginRoutes(app, deps.plugins);
   registerJobRoutes(app, deps.jobs);
   registerMemoryRoutes(app, deps.memories);
   registerFileRoutes(app, deps.files);

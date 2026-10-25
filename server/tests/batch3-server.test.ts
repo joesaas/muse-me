@@ -33,7 +33,7 @@ const REPO_ROOT = path.resolve(__dirname, "..", "..");
 class RecordingRegistry implements ToolRegistryPort {
   calls: Array<{ name: string; args: Record<string, unknown> }> = [];
   constructor(private readonly inner: SimulatedToolRegistry) {}
-  call(name: string, args: Record<string, unknown> = {}, mode = "simulate") {
+  async call(name: string, args: Record<string, unknown> = {}, mode = "simulate") {
     this.calls.push({ name, args: { ...args } });
     return this.inner.call(name, args, mode);
   }
@@ -165,7 +165,7 @@ describe("批次三-1：聊天与脚本走同一工具注册表、同一门位�
 
     parity.tools.calls = [];
     const script = makeMemeScript();
-    const first = parity.engine.runScript({ script });
+    const first = await parity.engine.runScript({ script });
     expect(first.status).toBe("awaiting_approval");
     expect(parity.tools.calls).toEqual(chatCalls);
 
@@ -185,12 +185,12 @@ describe("批次三-1：聊天与脚本走同一工具注册表、同一门位�
       .find((a) => a.runId === first.run_id);
     expect(pending).toBeDefined();
     expect(parity.approvals.decideApproval(pending!.id, "approved", "")).toBe(true);
-    const resumed = parity.engine.resumeScript(first.run_id);
+    const resumed = await parity.engine.resumeScript(first.run_id);
     expect(resumed.status).toBe("done");
     const scriptSwap = resumed.steps.find((s) => s.tool === "dex.sim_swap");
     // 脚本步结果即注册表直调结果（同一实现、确定性同输入同输出）。
     expect(scriptSwap?.result).toEqual(
-      new SimulatedToolRegistry(DEFAULT_NEWS_POOL).call(
+      await new SimulatedToolRegistry(DEFAULT_NEWS_POOL).call(
         "dex.sim_swap",
         { token: "BONK", amount_usd: 100 },
         "simulate",
@@ -210,7 +210,7 @@ describe("批次三-1：聊天与脚本走同一工具注册表、同一门位�
     expect(parity.runs.getRun(chat.runId)?.status).toBe("done");
 
     const script = makeMemeScript();
-    const result = parity.engine.runScript({ script });
+    const result = await parity.engine.runScript({ script });
     expect(result.status).toBe("done");
     expect(result.steps.map((s) => s.tool)).toEqual([
       "meme.scan",
@@ -244,7 +244,7 @@ describe("批次三-2：调度退避不再阻塞事件循环", () => {
         scripts,
         feed,
         notifications,
-        tools: { call: () => ({}), getTool: () => undefined, hasTool: () => true },
+        tools: { call: async () => ({}), getTool: () => undefined, hasTool: () => true },
         userId: USER,
         runner: () => ({ runId: null, status: "failed", error: "boom" }),
         retryBackoffSeconds: 0.3,

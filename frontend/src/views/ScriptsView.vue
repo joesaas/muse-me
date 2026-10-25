@@ -9,13 +9,32 @@ import { api } from "../api";
 import { useActionState, useAsyncList } from "../composables/useAsyncList";
 import { riskLabel, scriptRunStatusLabel, toolLabel } from "../labels";
 import { useAppStore } from "../stores/app";
-import type { Script, ScriptRunResult, ScriptRunStep } from "../types";
+import type { Script, ScriptParam, ScriptRunResult, ScriptRunStep } from "../types";
+
+interface PluginTemplate {
+  id: string;
+  name: string;
+  provider: string;
+  description: string;
+  params: ScriptParam[];
+  requires_connection: string;
+  configured: boolean;
+}
 
 const store = useAppStore();
 const scripts = useAsyncList<Script>(() => api<Script[]>("/api/scripts"));
+const plugins = useAsyncList<PluginTemplate>(() => api<PluginTemplate[]>("/api/plugins"));
 const action = useActionState();
 const trialResults = ref<Record<string, ScriptRunResult>>({});
 const runNotes = ref<Record<string, string>>({});
+
+// 安装插件模板：后端按名 upsert 成脚本，装完刷新下方列表即可运行。
+async function installPlugin(p: PluginTemplate): Promise<void> {
+  await action.runAction(`install-${p.id}`, async () => {
+    await api(`/api/plugins/${p.id}/install`, { method: "POST", body: "{}" });
+    await scripts.load();
+  });
+}
 
 // 每步结果里挑一条人话摘要：优先 summary，其次常见数值字段。
 function stepSummary(step: ScriptRunStep): string {
@@ -75,7 +94,10 @@ async function bind(s: Script): Promise<void> {
   });
 }
 
-onMounted(scripts.load);
+onMounted(() => {
+  void scripts.load();
+  void plugins.load();
+});
 </script>
 
 <template>
@@ -84,6 +106,26 @@ onMounted(scripts.load);
       <h2>插件</h2>
       <span class="muted">在对话中与助手共创的个性化程序</span>
     </div>
+    <h3>插件市场</h3>
+    <p class="muted">安装后出现在下方列表，可试运行、运行或设为定时任务；OKX 插件默认走模拟盘。</p>
+    <p v-if="plugins.loading.value" class="muted">正在加载插件市场…</p>
+    <p v-else-if="plugins.error.value" class="err">
+      插件市场加载失败：{{ plugins.error.value }} <button @click="plugins.retry">重试</button>
+    </p>
+    <div v-else class="cards">
+      <div v-for="p in plugins.items.value" :key="p.id" class="card">
+        <h3>{{ p.name }}</h3>
+        <p class="muted">
+          {{ p.provider }} · 参数：{{ (p.params || []).map((x) => x.label).join("、") || "无" }}
+        </p>
+        <p>{{ p.description }}</p>
+        <p v-if="!p.configured" class="muted">未配置 {{ p.provider }} 连接（见账号与连接），安装后运行会提示配置。</p>
+        <div class="row">
+          <button :disabled="action.busy.value !== null" @click="installPlugin(p)">安装</button>
+        </div>
+      </div>
+    </div>
+    <h3>已安装</h3>
     <p v-if="scripts.loading.value" class="muted">正在加载脚本…</p>
     <p v-else-if="scripts.error.value" class="err">
       脚本加载失败：{{ scripts.error.value }} <button @click="scripts.retry">重试</button>

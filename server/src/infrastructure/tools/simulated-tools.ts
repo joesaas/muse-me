@@ -77,11 +77,11 @@ export class SimulatedToolRegistry implements ToolRegistryPort {
     return TOOL_DEFS.get(name);
   }
 
-  call(
+  async call(
     name: string,
     args: Record<string, unknown> = {},
     mode = "simulate",
-  ): Record<string, unknown> {
+  ): Promise<Record<string, unknown>> {
     if (!TOOL_DEFS.has(name)) throw new NotFound(`工具不在白名单：${name}`);
     const a = { ...args };
     switch (name) {

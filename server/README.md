@@ -82,8 +82,10 @@ npm run build && npm start     # 或 npm run dev（tsx watch）
 ```
 
 环境变量见 `.env.example`：`SERVER_HOST/SERVER_PORT/SERVER_PASSWORD/SERVER_DB/
-SERVER_RUNTIME/SERVER_USER_ID/AWS_REGION/AGENTCORE_RUNTIME_ARN`。
-守卫：host 非回环且口令仍为默认 `demo` 时拒绝启动。
+SERVER_RUNTIME/SERVER_USER_ID/AWS_REGION/AGENTCORE_RUNTIME_ARN`，另有 OKX
+连接组 `OKX_API_KEY/OKX_API_SECRET/OKX_API_PASSPHRASE/OKX_DEMO/OKX_ALLOW_LIVE`。
+守卫：host 非回环且口令仍为默认 `demo` 时拒绝启动；OKX 默认只走模拟盘，
+实盘须 `OKX_DEMO=0` 且 `OKX_ALLOW_LIVE=1` 双显式才放行，否则下单工具拒绝。
 
 ## 验证
 

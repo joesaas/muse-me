@@ -156,6 +156,55 @@ export class ScriptEngine {
         },
       };
     }
+    // OKX 分支（真实交易所，默认模拟盘）：只认显式信号，不抢默认
+    // 买入路径——只说「买 BTC」仍走下面的 meme 模拟骨架；说「用 OKX
+    // 买」「现货」「永续/做多/做空」才走这里。执行环境由 OKX 配置定，
+    // 未配置时运行到下单步会如实拒绝，不静默回退模拟。
+    const perpSignal = ["做多", "做空", "永续", "合约"].some((k) => text.includes(k));
+    const spotSignal =
+      lowered.includes("okx") || ["现货", "交易所"].some((k) => text.includes(k));
+    if (perpSignal || spotSignal) {
+      const rawToken =
+        (entities.token ? String(entities.token) : "") || findToken(haystack) || "BTC";
+      const tokenUpper = rawToken.toUpperCase();
+      const amount = findAmount(haystack).amount;
+      if (perpSignal) {
+        const instId = tokenUpper.includes("-") ? tokenUpper : `${tokenUpper}-USDT-SWAP`;
+        const side = text.includes("做空") ? "short" : "long";
+        return {
+          name: `OKX 永续${side === "short" ? "做空" : "做多"}`,
+          description: "查行情 → 审批后在 OKX 模拟盘市价开仓（不动真钱）。",
+          params: [
+            { key: "inst_id", label: "合约", type: "string", default: instId },
+            { key: "side", label: "方向（long/short）", type: "string", default: side },
+            { key: "amount_usd", label: "金额（美元）", type: "number", default: amount },
+          ],
+          steps: [{ tool: "okx.ticker", args: { inst_id: "${inst_id}" }, save_as: "tick" }],
+          requires_approval_before_step: 1,
+          final_step: {
+            tool: "okx.perp_order",
+            args: { inst_id: "${inst_id}", side: "${side}", amount_usd: "${amount_usd}" },
+          },
+        };
+      }
+      const instId = tokenUpper.includes("-") ? tokenUpper : `${tokenUpper}-USDT`;
+      const side = text.includes("卖出") ? "sell" : "buy";
+      return {
+        name: `OKX 现货${side === "sell" ? "卖出" : "买入"}`,
+        description: "查行情 → 审批后在 OKX 模拟盘市价成交（不动真钱）。",
+        params: [
+          { key: "inst_id", label: "交易对", type: "string", default: instId },
+          { key: "side", label: "方向（buy/sell）", type: "string", default: side },
+          { key: "amount_usd", label: "金额（美元）", type: "number", default: amount },
+        ],
+        steps: [{ tool: "okx.ticker", args: { inst_id: "${inst_id}" }, save_as: "tick" }],
+        requires_approval_before_step: 1,
+        final_step: {
+          tool: "okx.spot_order",
+          args: { inst_id: "${inst_id}", side: "${side}", amount_usd: "${amount_usd}" },
+        },
+      };
+    }
     // meme 骨架：标的/金额抽取复用计划器口径（findToken/findAmount）。
     const planToken = findToken(haystack) ?? "BONK";
     const amount = findAmount(haystack).amount;
@@ -334,7 +383,7 @@ export class ScriptEngine {
   }
 
   // ------------------------------------------------------------ 执行入口
-  runScript(options: RunScriptOptions): ScriptRunResult {
+  async runScript(options: RunScriptOptions): Promise<ScriptRunResult> {
     const { script } = options;
     const doc = options.doc ?? script.doc;
     this.validateScript(doc);
@@ -391,7 +440,7 @@ export class ScriptEngine {
    * 审批后续跑：先断言 awaiting_approval（在任何工具执行/状态变更前），
    * 再从 plan_created 钉住的版本与 run_events 重建状态继续执行。
    */
-  resumeScript(runId: string): ScriptRunResult {
+  async resumeScript(runId: string): Promise<ScriptRunResult> {
     const run = this.runs.getRun(runId);
     if (!run || !run.scriptId) throw new NotFound(`脚本运行不存在：${runId}`);
     if (run.status !== "awaiting_approval") {
@@ -451,7 +500,7 @@ export class ScriptEngine {
   }
 
   // ------------------------------------------------------------ 执行核心
-  private execute(state: {
+  private async execute(state: {
     run: RunRecord;
     doc: ScriptDoc;
     params: Record<string, unknown>;
@@ -461,7 +510,7 @@ export class ScriptEngine {
     facts: Record<string, unknown>;
     spent: number;
     results: ScriptRunStepResult[];
-  }): ScriptRunResult {
+  }): Promise<ScriptRunResult> {
     const { run, doc, params, entity, trial, completed, facts, results } = state;
     let spent = state.spent;
     const steps = effectiveSteps(doc);
@@ -590,7 +639,13 @@ export class ScriptEngine {
       this.emit(run.id, "tool_called", { step: i, tool: toolName, args: resolved });
       let result: Record<string, unknown>;
       try {
-        const raw = this.tools.call(toolName, resolved, "simulate");
+        // 试运行（trial）一律 simulate（下单工具只出预览）；正式运行传
+        // execute（下单工具真实执行，环境仍由工具自身配置定）。
+        const raw = await this.tools.call(
+          toolName,
+          resolved,
+          trial ? "simulate" : "execute",
+        );
         result = isPlainObject(raw) ? raw : { value: raw };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);

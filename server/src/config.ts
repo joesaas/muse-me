@@ -9,6 +9,32 @@ export interface AgentCoreConfig {
 
 export type RuntimeMode = "local" | "agentcore";
 
+/**
+ * OKX 交易所连接配置（只存引用：密钥来自环境变量，永不进仓库与日志）。
+ * 模拟盘是默认且唯一的非显式放行路径：demo=true 时所有请求带
+ * x-simulated-trading: 1（OKX 模拟盘用独立的模拟盘 API Key，在模拟盘
+ * 环境内创建，不可拿实盘 Key + header 混用）；demo=false 且未显式
+ * OKX_ALLOW_LIVE=true 时，交易工具直接拒绝（fail-closed，防误触实盘）。
+ */
+export interface OkxConfig {
+  apiKey: string;
+  apiSecret: string;
+  passphrase: string;
+  /** 模拟盘（默认 true）。 */
+  demo: boolean;
+  /** 显式放行实盘（默认 false）。 */
+  allowLive: boolean;
+  baseUrl: string;
+}
+
+export function parseFlag(raw: string | undefined, name: string, def: boolean): boolean {
+  if (raw === undefined || raw.trim() === "") return def;
+  const v = raw.trim().toLowerCase();
+  if (v === "1" || v === "true") return true;
+  if (v === "0" || v === "false") return false;
+  throw new Error(`${name} 非法：${raw}（只允许 1/0/true/false）`);
+}
+
 export interface ServerConfig {
   host: string;
   port: number;
@@ -25,6 +51,8 @@ export interface ServerConfig {
   harnessRoot: string;
   /** 是否启动进程内调度守护（SERVER_SCHEDULER=0 关闭）。 */
   startScheduler: boolean;
+  /** OKX 交易所连接（见 OkxConfig；三件套为空即未配置）。 */
+  okx: OkxConfig;
 }
 
 export const DEFAULT_PASSWORD = "demo";
@@ -59,6 +87,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     webRoot: env.SERVER_WEB_ROOT?.trim() || "",
     harnessRoot: env.MUSE_ME_HARNESS_ROOT?.trim() || "",
     startScheduler: env.SERVER_SCHEDULER?.trim() !== "0",
+    okx: {
+      apiKey: env.OKX_API_KEY?.trim() || "",
+      apiSecret: env.OKX_API_SECRET?.trim() || "",
+      passphrase: env.OKX_API_PASSPHRASE?.trim() || "",
+      demo: parseFlag(env.OKX_DEMO, "OKX_DEMO", true),
+      allowLive: parseFlag(env.OKX_ALLOW_LIVE, "OKX_ALLOW_LIVE", false),
+      baseUrl: env.OKX_BASE_URL?.trim() || "https://www.okx.com",
+    },
   };
 }
 

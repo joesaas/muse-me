@@ -33,7 +33,7 @@ export type ScriptRunner = (
   job: JobRecord,
   params: Record<string, unknown>,
   entity: Record<string, unknown> | null,
-) => ScriptRunOutcome;
+) => ScriptRunOutcome | Promise<ScriptRunOutcome>;
 
 export interface SchedulerDeps {
   jobs: JobStore;
@@ -246,7 +246,7 @@ export class SchedulerDaemon {
   }
 
   private async checkCondition(job: JobRecord, now: Date): Promise<JobRunRecord[]> {
-    const current = this.evalCondition(job.triggerSpec ?? {});
+    const current = await this.evalCondition(job.triggerSpec ?? {});
     if (!this.conditionState.has(job.id)) {
       this.conditionState.set(job.id, current); // 首次只建基线（重启防重复执行）
       return [];
@@ -268,7 +268,7 @@ export class SchedulerDaemon {
    * - "SYM.field" → market.quote(symbol=SYM) 取 field；
    * - "SYM" → market.quote 取 price_usd。结果字段非数值一律 false。
    */
-  private evalCondition(spec: Record<string, unknown>): boolean {
+  private async evalCondition(spec: Record<string, unknown>): Promise<boolean> {
     const metric = String(spec.metric ?? "");
     const opText = String(spec.op ?? ">=");
     const threshold = Number(spec.threshold ?? 0) || 0;
@@ -291,7 +291,7 @@ export class SchedulerDaemon {
       field = "price_usd";
       args = { symbol: metric.toUpperCase() };
     }
-    const result = this.deps.tools.call(tool, args, "simulate");
+    const result = await this.deps.tools.call(tool, args, "simulate");
     const value = result[field];
     if (typeof value !== "number") return false;
     return (OPS[opText] ?? OPS[">="]!)(value, threshold);
@@ -328,7 +328,7 @@ export class SchedulerDaemon {
       let result: ScriptRunOutcome = { status: "failed" };
       let status: string;
       try {
-        result = this.deps.runner(job, params, entity) ?? { status: "failed" };
+        result = (await this.deps.runner(job, params, entity)) ?? { status: "failed" };
         status = String(result.status || "done");
       } catch (err) {
         status = "failed";

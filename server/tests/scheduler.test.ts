@@ -64,7 +64,7 @@ function buildDaemonStack() {
   const calls: Array<{ job: JobRecord; params: Record<string, unknown> }> = [];
   let price = 50;
   const tools: ToolRegistryPort = {
-    call: (name) =>
+    call: async (name) =>
       name === "market.quote"
         ? { price_usd: price, source: "simulated", cost_usd: 0.001 }
         : {},
@@ -230,7 +230,7 @@ describe("SchedulerDaemon 触发语义", () => {
       feed: stack.feed,
       notifications: stack.notifications,
       tools: {
-        call: () => ({}),
+        call: async () => ({}),
         getTool: () => undefined,
         hasTool: () => true,
       },

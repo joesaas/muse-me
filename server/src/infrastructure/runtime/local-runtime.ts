@@ -158,10 +158,11 @@ export class LocalRuntime implements RuntimePort {
       tool: stepDef.tool,
       args: stepDef.args,
     });
-    // 单实现：与脚本引擎同一注册表、同一 mode="simulate"。
+    // 单实现：与脚本引擎同一注册表、同一 mode="simulate"（聊天计划
+    // 只干跑，不真实下单；真实执行只走脚本引擎正式运行）。
     // 步成本口径保持不变：仍记计划自带的 stepDef.costUsd，不改用
     // 注册表结果里的 cost_usd（两者在 Aave 步上并不相等，见评审 BE-6 备注）。
-    this.tools.call(stepDef.tool, stepDef.args, "simulate");
+    await this.tools.call(stepDef.tool, stepDef.args, "simulate");
     this.runs.addRunCost(runId, stepDef.costUsd);
     yield this.emit(runId, "step_done", {
       step: path,

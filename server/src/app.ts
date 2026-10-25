@@ -12,6 +12,7 @@ import { FeedService } from "./application/feed.service.js";
 import { FileService } from "./application/file.service.js";
 import { JobService } from "./application/job.service.js";
 import { MemoryService } from "./application/memory.service.js";
+import { PluginService } from "./application/plugin.service.js";
 import { PromptService } from "./application/prompt.service.js";
 import { ScriptEngine } from "./application/script-engine.js";
 import { ScriptService } from "./application/script.service.js";
@@ -45,6 +46,9 @@ import { SqliteRunStore } from "./infrastructure/sqlite/runs.store.js";
 import { SqliteScriptStore } from "./infrastructure/sqlite/scripts.store.js";
 import { SqliteSecretRefStore } from "./infrastructure/sqlite/secrets.store.js";
 import { SqliteRunSnapshotStore } from "./infrastructure/sqlite/snapshots.store.js";
+import { OkxClient } from "./infrastructure/okx/okx-client.js";
+import { OkxToolRegistry } from "./infrastructure/okx/okx-tools.js";
+import { CompositeToolRegistry } from "./infrastructure/tools/composite-tools.js";
 import { DEFAULT_NEWS_POOL, SeedNewsSource } from "./infrastructure/tools/seed-news.js";
 import { SimulatedToolRegistry } from "./infrastructure/tools/simulated-tools.js";
 
@@ -103,7 +107,10 @@ export function buildApp(config: ServerConfig): BuiltApp {
 
   const newsSource = new SeedNewsSource();
   // 工具注册表与精选共用同一新闻池；notify.send 的投递落站内通知（同 Python notify_sink）。
-  const toolRegistry = new SimulatedToolRegistry(DEFAULT_NEWS_POOL, (note) => {
+  // 组合注册表：模拟工具（确定性）+ OKX 真实工具（okx.* 前缀路由），
+  // 目录白名单仍是同一张 TOOL_DEFS。
+  const okxClient = new OkxClient(config.okx);
+  const simulatedRegistry = new SimulatedToolRegistry(DEFAULT_NEWS_POOL, (note) => {
     notificationStore.addNotification({
       id: randomUUID(),
       userId: config.userId,
@@ -114,6 +121,10 @@ export function buildApp(config: ServerConfig): BuiltApp {
       createdAt: nowIso(),
     });
   });
+  const toolRegistry = new CompositeToolRegistry(
+    simulatedRegistry,
+    new OkxToolRegistry(okxClient),
+  );
 
   // 护栏单真值源：启动时解析 harness/guardrails/policy.md；读不到或残缺即
   // fail-closed（限额归零、全部单独审批），不再注入硬编码常量作运行政策。
@@ -188,9 +199,41 @@ export function buildApp(config: ServerConfig): BuiltApp {
         ? "经 RuntimePort 适配 AWS AgentCore，轨迹全量落库可回放"
         : "进程内 LocalRuntime，轨迹全量落库可回放",
     agentcoreHealth: () => agentAdmin.health(),
+    // OKX 连接行：未配置只报缺失的 env 名；已配置则实测余额接口，
+    // 成功报环境（模拟盘/实盘）与 USDT 可用，失败报 OKX 原文（不含密钥）。
+    okxHealth: async () => {
+      if (!okxClient.configured) {
+        return {
+          status: "未配置",
+          detail:
+            "设置 OKX_API_KEY / OKX_API_SECRET / OKX_API_PASSPHRASE（模拟盘 Key 在模拟盘环境内创建）",
+        };
+      }
+      try {
+        const balances = await okxClient.balance();
+        const usdt = balances.find((b) => b.ccy === "USDT");
+        return {
+          status: `已连接（${okxClient.environment === "demo" ? "模拟盘" : "实盘"}）`,
+          detail: usdt
+            ? `USDT 可用 ${usdt.availBal}`
+            : `已返回 ${balances.length} 个币种余额`,
+        };
+      } catch (err) {
+        return {
+          status: "异常",
+          detail: `OKX 连通失败：${err instanceof Error ? err.message : String(err)}`.slice(0, 120),
+        };
+      }
+    },
     secrets: secretRefStore,
     userId: config.userId,
   });
+  const pluginService = new PluginService(
+    scriptStore,
+    scriptEngine,
+    config.userId,
+    () => okxClient.configured,
+  );
   const agentAdminService = new AgentAdminService(
     agentAdmin,
     runtime,
@@ -207,8 +250,8 @@ export function buildApp(config: ServerConfig): BuiltApp {
     sweepApprovals: () => {
       approvalService.expireStale();
     },
-    runner: (job, params, entity) => {
-      const result = scriptService.run(job.scriptId, {
+    runner: async (job, params, entity) => {
+      const result = await scriptService.run(job.scriptId, {
         params,
         source: "job",
         jobId: job.id,
@@ -276,6 +319,7 @@ export function buildApp(config: ServerConfig): BuiltApp {
     feed: feedService,
     prompts: promptService,
     scripts: scriptService,
+    plugins: pluginService,
     jobs: jobService,
     memories: memoryService,
     files: fileService,

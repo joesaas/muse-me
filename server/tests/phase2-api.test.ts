@@ -255,14 +255,15 @@ describe("二期 API：文件下载与连接状态", () => {
     expect(missing.statusCode).toBe(404);
   });
 
-  it("connections 四行齐全，AgentCore 未配置诚实 not_configured，响应不含密钥样值", async () => {
+  it("connections 五行齐全，AgentCore 未配置诚实 not_configured，OKX 未配置诚实未配置，响应不含密钥样值", async () => {
     const { app } = newApp();
     const headers = { cookie: await loginCookie(app) };
     const rows = (await app.inject({ method: "GET", url: "/api/settings/connections", headers })).json() as Array<{ name: string; status: string; detail: string }>;
-    expect(rows.map((r) => r.name)).toEqual(["模型通道", "Agent 运行时", "AWS AgentCore", "密钥库"]);
-    expect(rows[2]?.status).toBe("not_configured");
+    expect(rows.map((r) => r.name)).toEqual(["模型通道", "OKX 交易所", "Agent 运行时", "AWS AgentCore", "密钥库"]);
+    expect(rows[3]?.status).toBe("not_configured");
     expect(rows[0]?.status).toContain("Mock");
-    expect(rows[3]?.status).toBe("暂无登记引用");
+    expect(rows[1]?.status).toBe("未配置");
+    expect(rows[4]?.status).toBe("暂无登记引用");
   });
 });
 

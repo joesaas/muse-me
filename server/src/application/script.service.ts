@@ -41,7 +41,7 @@ export class ScriptService {
     return draft;
   }
 
-  run(
+  async run(
     scriptId: string,
     options: {
       params?: Record<string, unknown>;
@@ -51,7 +51,7 @@ export class ScriptService {
       entity?: Record<string, unknown> | null;
       version?: number | null;
     } = {},
-  ): ScriptRunResult {
+  ): Promise<ScriptRunResult> {
     const script = this.get(scriptId);
     let doc: ScriptDoc | undefined;
     if (
@@ -76,11 +76,11 @@ export class ScriptService {
     });
   }
 
-  trial(scriptId: string, params?: Record<string, unknown>): ScriptRunResult {
+  async trial(scriptId: string, params?: Record<string, unknown>): Promise<ScriptRunResult> {
     return this.run(scriptId, { params, trial: true, source: "script_trial" });
   }
 
-  resume(runId: string): ScriptRunResult {
+  async resume(runId: string): Promise<ScriptRunResult> {
     return this.engine.resumeScript(runId);
   }
 
@@ -126,7 +126,7 @@ export class ScriptService {
     }
     return (
       `已把这次做法存成脚本《${saved.name}》，` +
-      "在「我的脚本」里可以试运行、改参数重跑，或设为定时任务。"
+      "在「插件」里可以试运行、改参数重跑，或设为定时任务。"
     );
   }
 }

@@ -16,6 +16,8 @@ export interface SettingsDeps {
   runtimeDetail: string;
   /** AgentCore 管理面健康；组合根恒注入（同 Python bootstrap 恒传 agentcore 对象）。 */
   agentcoreHealth: () => Promise<Record<string, unknown>>;
+  /** OKX 连接健康（可选；未注入时不显示 OKX 行）。 */
+  okxHealth?: () => Promise<{ status: string; detail: string }>;
   secrets: SecretRefStore;
   userId: string;
 }
@@ -41,6 +43,10 @@ export class SettingsService {
         status: "Mock 模拟模型（离线）",
         detail: "控制面当前只提供确定性模拟回复，尚未接入真实模型配置面",
       });
+    }
+    if (this.deps.okxHealth) {
+      const okx = await this.deps.okxHealth();
+      rows.push({ name: "OKX 交易所", status: okx.status, detail: okx.detail });
     }
     const health = await this.deps.runtimeHealth();
     rows.push({
