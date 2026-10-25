@@ -1,0 +1,27 @@
+# MuseMe systemd 用户服务 —— 形态 B：控制面分离（server/）
+#
+# 安装由 deploy/scripts/setup.sh 完成（复制到 ~/.config/systemd/user/museme.service）：
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now museme
+#   loginctl enable-linger "$USER"   # 退出登录后服务继续跑，服务器上必做
+#
+# 口令不写进本文件，改从 EnvironmentFile 读（setup.sh 生成，权限 600）：
+#   ~/.config/museme/museme.env  内含 SERVER_PASSWORD=<自定义口令>
+# 注意：本单元要求先跑过 setup.sh（它会在 server/ 里 npm install + npm run build）。
+[Unit]
+Description=MuseMe (form B: server control plane)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/muse-me/server
+EnvironmentFile=%h/.config/museme/museme.env
+Environment=SERVER_HOST=127.0.0.1
+Environment=SERVER_PORT=8787
+ExecStart=/usr/bin/node dist/src/main.js
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

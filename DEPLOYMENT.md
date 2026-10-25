@@ -65,6 +65,19 @@ systemctl --user enable --now museme
 journalctl --user -u museme -f                        # 看日志
 ```
 
+## Step 3.5 nginx 前置（已装 nginx 时推荐）
+
+仓库根 `deploy/` 目录已备好 nginx 配置与部署脚本，思路是：应用只监听回环地址，nginx 在前面接 80/443，**安全组只需放行 80（与 443），应用端口不用、也不应对外开**。
+
+```bash
+bash deploy/scripts/setup.sh --form a   # 形态 A；形态 B 用 --form b
+bash deploy/scripts/status.sh           # 状态速查
+bash deploy/scripts/update.sh           # 更新（前端/server 有改动时加 --rebuild）
+bash deploy/scripts/backup.sh           # 备份
+```
+
+细节（站点文件、systemd 单元、HTTPS、故障表）见 `deploy/README.md`。注意 SSE 事件流在 nginx 配置里已关缓冲，自己改配置时不要删 `proxy_buffering off`。
+
 ## Step 4 更新与回滚
 
 更新：

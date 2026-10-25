@@ -1,0 +1,27 @@
+# MuseMe systemd 用户服务 —— 形态 A：Python 单机全栈
+#
+# 安装由 deploy/scripts/setup.sh 完成（复制到 ~/.config/systemd/user/museme.service）：
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now museme
+#   loginctl enable-linger "$USER"   # 退出登录后服务继续跑，服务器上必做
+#
+# 口令不写进本文件，改从 EnvironmentFile 读（setup.sh 生成，权限 600）：
+#   ~/.config/museme/museme.env  内含 MUSE_ME_PASSWORD=<自定义口令>
+[Unit]
+Description=MuseMe (form A: Python full stack)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/muse-me
+EnvironmentFile=%h/.config/museme/museme.env
+Environment=PYTHONPATH=src
+Environment=MUSE_ME_HOST=127.0.0.1
+Environment=MUSE_ME_PORT=8765
+ExecStart=/usr/bin/python3 -m muse_me
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
