@@ -62,6 +62,8 @@ bash deploy/scripts/setup.sh --form b      # 重新跑一次：服务单元与 n
 |---|---|
 | `nginx -t` 失败 | 站点文件语法或证书路径；`sites-enabled` 里不要同时链两个形态 |
 | 打开页面 502 | 应用没起来：`systemctl --user status museme` 与 `journalctl` |
+| `sites-enabled` 不存在 / `ln` 报 No such file | 发行版布局差异：Amazon Linux 的 nginx 只用 `conf.d`，新版 setup.sh 会自动改拷 `/etc/nginx/conf.d/museme.conf`；手动处理也是同一条拷贝 + `nginx -t` + reload |
+| `loginctl enable-linger` 失败 | 普通用户常无权改这项，手动跑 `sudo loginctl enable-linger <用户名>`，用 `loginctl show-user <用户名>` 查 Linger 应为 yes；不做这一步则退出 SSH 后服务可能停 |
 | 登录页打不开但 nginx 正常 | 服务监听地址是不是 127.0.0.1、口令文件是否在位 |
 | 发了消息没事件流 | nginx 的 `/api/events` 段是否丢了 `proxy_buffering off` |
 | 启动即退出、提示拒绝启动 | 绑了非回环地址但口令是默认 `demo`——改口令（DEPLOYMENT.md Step 3） |

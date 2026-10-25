@@ -130,14 +130,32 @@ else
 fi
 systemctl --user daemon-reload
 systemctl --user enable --now museme
-loginctl enable-linger "$USER" 2>/dev/null || echo "注意：loginctl enable-linger 未成功，退出登录后服务可能停，请手动跑一次"
+# linger 让退出登录后服务继续跑；普通用户常无权限改这项，失败时用 sudo 再试一次
+loginctl enable-linger "$USER" 2>/dev/null \
+  || sudo loginctl enable-linger "$USER" 2>/dev/null \
+  || echo "注意：loginctl enable-linger 未成功，退出登录后服务可能停，请手动跑：sudo loginctl enable-linger $USER"
 
 echo "== Step 4/5：接 nginx =="
-sudo cp "$REPO_DIR/deploy/nginx/museme-$FORM.conf" /etc/nginx/sites-available/museme
-sudo ln -sf /etc/nginx/sites-available/museme /etc/nginx/sites-enabled/museme
-# 同一时刻只启用一个形态：若另一形态的旧链接存在会冲突，上面 ln -sf 已覆盖为当前形态
+# 各发行版 nginx 布局不同：Debian/Ubuntu 用 sites-enabled，Amazon Linux 等只用 conf.d。
+# 有 sites-enabled 目录就走符号链接，否则直接把配置拷进 conf.d（nginx.conf 默认 include 它）。
+if [ -d /etc/nginx/sites-enabled ]; then
+  sudo mkdir -p /etc/nginx/sites-available
+  sudo cp "$REPO_DIR/deploy/nginx/museme-$FORM.conf" /etc/nginx/sites-available/museme
+  sudo ln -sf /etc/nginx/sites-available/museme /etc/nginx/sites-enabled/museme
+  echo "nginx 站点已链入 sites-enabled"
+else
+  sudo cp "$REPO_DIR/deploy/nginx/museme-$FORM.conf" /etc/nginx/conf.d/museme.conf
+  echo "nginx 站点已拷入 conf.d（本机无 sites-enabled，走 conf.d 布局）"
+fi
+# 同一时刻只启用一个形态：上面两种写法目标文件名都是 museme，不会双跑
 sudo nginx -t
+sudo systemctl enable --now nginx 2>/dev/null || true
 sudo systemctl reload nginx
+# 确认主配置真的 include 了本站点（否则 reload 成功但页面仍是默认站）
+if ! sudo nginx -T 2>/dev/null | grep -q "proxy_pass http://127.0.0.1:$PORT"; then
+  echo "警告：nginx -T 里没看到本站点的 proxy_pass，可能是 nginx.conf 没 include 对应目录；" >&2
+  echo "请查 /etc/nginx/nginx.conf 里的 include 行，或跑 bash deploy/scripts/status.sh 看详情。" >&2
+fi
 
 echo "== Step 5/5：验证 =="
 sleep 2
