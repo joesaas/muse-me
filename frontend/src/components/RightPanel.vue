@@ -13,6 +13,7 @@ import {
   approvalStatusLabel,
   connectionStatusLabel,
   memoryLevelLabel,
+  relativeTimeLabel,
   riskLabel,
   runKindLabel,
   runStatusLabel,
@@ -87,6 +88,7 @@ onUnmounted(() => {
             <button :disabled="action.busy.value !== null" @click="decide(a, false)">拒绝</button>
           </div>
         </div>
+        <p v-if="decided.length" class="rsub">最近已决</p>
         <div v-for="a in decided" :key="a.id" class="ritem muted-item">
           <h4>{{ a.title }}</h4>
           <p>{{ approvalStatusLabel(a.status) }}</p>
@@ -107,7 +109,10 @@ onUnmounted(() => {
       <p v-else-if="!recentRuns.length" class="muted">还没有运行记录。</p>
       <div v-for="r in recentRuns" :key="r.id" class="ritem">
         <h4>{{ r.title || runKindLabel(r.kind) }}</h4>
-        <p>{{ runStatusLabel(r.status) }} · 花费 ${{ r.cost_usd ?? 0 }}</p>
+        <p>
+          {{ runStatusLabel(r.status) }} · 花费 ${{ r.cost_usd ?? 0
+          }}<span v-if="r.created_at"> · {{ relativeTimeLabel(r.created_at) }}</span>
+        </p>
       </div>
     </section>
 

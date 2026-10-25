@@ -216,3 +216,19 @@ export function toolLabel(v: string | undefined | null): string {
   if (!v) return "工具";
   return TOOL_LABELS[v] ?? "工具";
 }
+
+// 相对时间：刚刚 / N 分钟前 / N 小时前 / N 天前；无时间回落「时间未知」，
+// 解析失败回落原文（与旧版 FeedView 本地实现同一口径，现收进映射表供右栏复用）。
+export function relativeTimeLabel(iso: string | undefined | null): string {
+  if (!iso) return "时间未知";
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return iso;
+  const mins = Math.max(0, Math.floor((Date.now() - t) / 60000));
+  if (mins < 1) return "刚刚";
+  if (mins < 60) return `${mins} 分钟前`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours} 小时前`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days} 天前`;
+  return iso;
+}

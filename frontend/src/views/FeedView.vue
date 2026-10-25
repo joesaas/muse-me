@@ -6,6 +6,7 @@ import { onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { api } from "../api";
 import { useAsyncList } from "../composables/useAsyncList";
+import { relativeTimeLabel } from "../labels";
 import type { Chat, FeedItem, PromptDoc } from "../types";
 
 const router = useRouter();
@@ -59,20 +60,7 @@ async function rollbackPrompt(): Promise<void> {
   await feed.load();
 }
 
-// 截图版式的时间写法：相对时间（1 小时前 / 2 天前），解析失败回落原文、无时间回落「时间未知」。
-function relativeTime(iso?: string): string {
-  if (!iso) return "时间未知";
-  const t = Date.parse(iso);
-  if (Number.isNaN(t)) return iso;
-  const mins = Math.max(0, Math.floor((Date.now() - t) / 60000));
-  if (mins < 1) return "刚刚";
-  if (mins < 60) return `${mins} 分钟前`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours} 小时前`;
-  const days = Math.floor(hours / 24);
-  if (days < 30) return `${days} 天前`;
-  return iso;
-}
+// 时间写法见映射表 relativeTimeLabel（截图版式的相对时间，右栏复用同一口径）。
 
 function sourceInitial(item: FeedItem): string {
   return (item.source?.trim().charAt(0) ?? "") || "精";
@@ -122,7 +110,7 @@ onMounted(feed.load);
         <div class="feed-head">
           <span class="feed-avatar" :title="f.source ?? ''">{{ sourceInitial(f) }}</span>
           <h3 class="feed-title">{{ f.title }}</h3>
-          <span class="feed-time">{{ relativeTime(f.published_at) }}</span>
+          <span class="feed-time">{{ relativeTimeLabel(f.published_at) }}</span>
         </div>
         <p class="feed-summary">{{ f.summary }}</p>
         <p v-if="(f.entities || []).length" class="feed-tags">

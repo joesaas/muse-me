@@ -9,6 +9,7 @@ import {
   jobLastStatusLabel,
   memoryLevelLabel,
   memoryStatusLabel,
+  relativeTimeLabel,
   riskLabel,
   runStatusLabel,
   toolLabel,
@@ -58,5 +59,15 @@ describe("labels", () => {
     }
     expect(toolLabel("dex.sim_swap")).toBe("模拟买入");
     expect(toolLabel("")).toBe("工具");
+  });
+
+  it("相对时间：无时间、解析失败、分钟/小时/天", () => {
+    expect(relativeTimeLabel(undefined)).toBe("时间未知");
+    expect(relativeTimeLabel("not-a-date")).toBe("not-a-date");
+    const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
+    expect(relativeTimeLabel(ago(30_000))).toBe("刚刚");
+    expect(relativeTimeLabel(ago(5 * 60_000))).toBe("5 分钟前");
+    expect(relativeTimeLabel(ago(3 * 3_600_000))).toBe("3 小时前");
+    expect(relativeTimeLabel(ago(2 * 86_400_000))).toBe("2 天前");
   });
 });
