@@ -1,8 +1,8 @@
 <script setup lang="ts">
 // 顶层布局：登录门 + 三栏（左栏导航 + 中间 RouterView + 右栏审批/运行历史/个人指纹）。
 // 左栏只留与用户直接相关的四项：聊天、今日精选、插件（脚本）、文库（文件）；
-// 待我确认与执行记录移到右栏，定时任务挂在右栏运行历史表头，
-// 它记得的事与账号与连接挂在右栏个人指纹区——路由都在，入口换了位置。
+// 审批与运行历史移到右栏，定时任务挂在右栏运行历史表头，
+// 记忆与账号与连接挂在右栏个人指纹区——路由都在，入口换了位置。
 // 登录态由 Pinia store 持有；登录探测只把 401 当作未登录，
 // 其它错误（500/断网）显示「服务暂时连不上」而不是误判为未登录（四维评审 FE-12）。
 // 菜单高亮按路径前缀判定（四维评审 FE-4 选型）：/chat 与 /chat/:id 是同级路由记录，
@@ -54,7 +54,7 @@ async function login(): Promise<void> {
     password.value = "";
     store.setLoggedIn();
   } catch {
-    loginErr.value = "口令不对，再试试";
+    loginErr.value = "口令不正确，请重试";
   }
 }
 </script>
@@ -63,7 +63,7 @@ async function login(): Promise<void> {
   <div v-if="store.authed === false" class="login">
     <div class="login-card">
       <h1>我的个人助手</h1>
-      <p>输入口令进入（演示默认口令 demo）</p>
+      <p>请输入口令登录</p>
       <input v-model="password" type="password" placeholder="口令" @keyup.enter="login">
       <button @click="login">进入</button>
       <p class="err">{{ loginErr }}</p>
@@ -73,7 +73,7 @@ async function login(): Promise<void> {
   <div v-else-if="probeError" class="login">
     <div class="login-card">
       <h1>我的个人助手</h1>
-      <p>服务暂时连不上，请稍后再试。</p>
+      <p>服务连接失败，请稍后重试。</p>
       <button @click="probe">重试</button>
     </div>
   </div>

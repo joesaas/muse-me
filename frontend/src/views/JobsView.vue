@@ -31,13 +31,13 @@ onMounted(jobs.load);
   <section class="view">
     <div class="bar">
       <h2>定时任务</h2>
-      <span class="muted">到点自动运行你保存的脚本</span>
+      <span class="muted">按设定时间自动运行已保存的插件</span>
     </div>
     <p v-if="jobs.loading.value" class="muted">正在加载定时任务…</p>
     <p v-else-if="jobs.error.value" class="err">
       定时任务加载失败：{{ jobs.error.value }} <button @click="jobs.retry">重试</button>
     </p>
-    <p v-else-if="!jobs.items.value.length" class="muted">还没有定时任务。在「我的脚本」里把脚本设为定时任务即可。</p>
+    <p v-else-if="!jobs.items.value.length" class="muted">暂无定时任务。可在「插件」中将插件设为定时任务。</p>
     <div v-else class="cards">
       <div v-for="j in jobs.items.value" :key="j.id" class="card">
         <h3>{{ j.name }}</h3>

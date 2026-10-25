@@ -20,7 +20,7 @@ onMounted(connections.load);
     <p v-else-if="connections.error.value" class="err">
       连接状态加载失败：{{ connections.error.value }} <button @click="connections.retry">重试</button>
     </p>
-    <p v-else-if="!connections.items.value.length" class="muted">还没有连接信息。</p>
+    <p v-else-if="!connections.items.value.length" class="muted">暂无连接信息。</p>
     <div v-else class="cards">
       <div v-for="c in connections.items.value" :key="c.name" class="card">
         <h3>{{ c.name }}</h3>

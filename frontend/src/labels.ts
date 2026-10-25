@@ -36,7 +36,7 @@ export function runStatusLabel(v: string | undefined | null): string {
     case "cancelled":
       return "已取消";
     case "awaiting_approval":
-      return "等你确认";
+      return "待审批";
     case "pending":
       return "等待中";
     case undefined:
@@ -53,7 +53,7 @@ export function scriptRunStatusLabel(v: string | undefined | null): string {
     case "done":
       return "试运行完成";
     case "awaiting_approval":
-      return "停在待确认";
+      return "待审批";
     case "failed":
       return "试运行失败";
     default:
@@ -64,7 +64,7 @@ export function scriptRunStatusLabel(v: string | undefined | null): string {
 export function approvalStatusLabel(v: string | undefined | null): string {
   switch (v) {
     case "pending":
-      return "等你拍板";
+      return "待审批";
     case "approved":
       return "已批准";
     case "denied":
@@ -92,7 +92,7 @@ export function memoryStatusLabel(v: string | undefined | null): string {
     case "active":
       return "已生效";
     case "pending":
-      return "等你批准";
+      return "待审批";
     case "rejected":
       return "已拒绝";
     default:
@@ -105,7 +105,7 @@ export function jobLastStatusLabel(v: string | undefined | null): string {
     case undefined:
     case null:
     case "":
-      return "还没跑过";
+      return "未运行";
     default:
       return runStatusLabel(v);
   }
@@ -122,7 +122,7 @@ export function eventTypeLabel(v: string | undefined | null): string {
     case "step_done":
       return "步骤完成";
     case "approval_required":
-      return "需要你确认";
+      return "待审批";
     case "assistant_delta":
       return "助手回复中";
     case "run_done":
@@ -143,7 +143,7 @@ export function eventTypeLabel(v: string | undefined | null): string {
 export function fileKindLabel(v: string | undefined | null): string {
   switch (v) {
     case "script_export":
-      return "脚本导出";
+      return "插件导出";
     case "evaluation_report":
       return "评估报告";
     case "document":
@@ -174,7 +174,7 @@ export function runKindLabel(v: string | undefined | null): string {
     case "chat":
       return "聊天";
     case "script":
-      return "脚本";
+      return "插件";
     case "job":
       return "定时任务";
     default:

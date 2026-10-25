@@ -21,11 +21,11 @@ describe("labels", () => {
     expect(riskLabel("write")).toBe("写入");
     expect(riskLabel("irreversible")).toBe("不可撤销");
     expect(riskLabel("high")).toBe("高风险");
-    expect(runStatusLabel("awaiting_approval")).toBe("等你确认");
+    expect(runStatusLabel("awaiting_approval")).toBe("待审批");
     expect(runStatusLabel("running")).toBe("进行中");
-    expect(approvalStatusLabel("pending")).toBe("等你拍板");
+    expect(approvalStatusLabel("pending")).toBe("待审批");
     expect(approvalStatusLabel("denied")).toBe("已拒绝");
-    expect(jobLastStatusLabel(undefined)).toBe("还没跑过");
+    expect(jobLastStatusLabel(undefined)).toBe("未运行");
     expect(jobLastStatusLabel("failed")).toBe("失败");
   });
 
@@ -39,8 +39,8 @@ describe("labels", () => {
   it("事件类型、文件类别、连接状态映射", () => {
     expect(eventTypeLabel("plan_created")).toBe("已制定计划");
     expect(eventTypeLabel("tool_called")).toBe("调用工具");
-    expect(eventTypeLabel("approval_required")).toBe("需要你确认");
-    expect(fileKindLabel("script_export")).toBe("脚本导出");
+    expect(eventTypeLabel("approval_required")).toBe("待审批");
+    expect(fileKindLabel("script_export")).toBe("插件导出");
     expect(connectionStatusLabel("not_configured")).toBe("未配置");
   });
 

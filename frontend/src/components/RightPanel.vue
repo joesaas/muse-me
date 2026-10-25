@@ -2,9 +2,9 @@
 // 右栏：审批 / 运行历史 / 个人指纹。
 // 三个区的数据源与对应整页完全一致（同一接口、同一人话映射），右栏只做摘要与快捷操作，
 // 详情仍进整页；窄屏下整栏由 CSS 隐藏，不挤中间对话。
-// 审批：待处理可直接批准/拒绝（拒绝要理由，与待我确认页等价），已决只列最近 3 条。
+// 审批：待处理可直接批准/拒绝（拒绝要理由，与审批页等价），已决只列最近 3 条。
 // 运行历史：最近 5 条，表头挂「定时任务」入口（定时任务不再占左栏）。
-// 个人指纹：它记得的事（生效中的前 5 条）+ 账号连接状态，入口分别进 /memories 与 /settings。
+// 个人指纹：记忆（生效中的前 5 条）+ 账号连接状态，入口分别进 /memories 与 /settings。
 import { computed, onMounted, onUnmounted } from "vue";
 import { RouterLink } from "vue-router";
 import { api } from "../api";
@@ -42,7 +42,7 @@ async function loadAll(): Promise<void> {
 }
 
 async function decide(a: Approval, ok: boolean): Promise<void> {
-  const reason = ok ? "" : prompt("拒绝理由（可空）") || "";
+  const reason = ok ? "" : prompt("请输入拒绝理由（可选）") || "";
   await action.runAction(`decide-${a.id}`, async () => {
     await api(`/api/approvals/${a.id}/decide`, {
       method: "POST",
@@ -75,7 +75,7 @@ onUnmounted(() => {
         加载失败：{{ approvals.error.value }} <button @click="approvals.retry">重试</button>
       </p>
       <template v-else>
-        <p v-if="!pending.length" class="muted">现在没有需要你确认的事。</p>
+        <p v-if="!pending.length" class="muted">暂无待审批事项。</p>
         <div v-for="a in pending" :key="a.id" class="ritem">
           <h4>{{ a.title }}</h4>
           <p v-if="a.detail">{{ a.detail }}</p>
@@ -106,7 +106,7 @@ onUnmounted(() => {
       <p v-else-if="runs.error.value" class="err">
         加载失败：{{ runs.error.value }} <button @click="runs.retry">重试</button>
       </p>
-      <p v-else-if="!recentRuns.length" class="muted">还没有运行记录。</p>
+      <p v-else-if="!recentRuns.length" class="muted">暂无运行记录。</p>
       <div v-for="r in recentRuns" :key="r.id" class="ritem">
         <h4>{{ r.title || runKindLabel(r.kind) }}</h4>
         <p>
@@ -119,14 +119,14 @@ onUnmounted(() => {
     <section class="rsec">
       <div class="rhead">
         <h3>个人指纹</h3>
-        <span><RouterLink to="/memories">它记得的事 →</RouterLink> · <RouterLink to="/settings">账号与连接 →</RouterLink></span>
+        <span><RouterLink to="/memories">记忆 →</RouterLink> · <RouterLink to="/settings">账号与连接 →</RouterLink></span>
       </div>
       <p v-if="memories.loading.value || connections.loading.value" class="muted">正在加载…</p>
       <p v-else-if="memories.error.value" class="err">
         记忆加载失败：{{ memories.error.value }} <button @click="memories.retry">重试</button>
       </p>
       <template v-else>
-        <p v-if="!activeMemories.length" class="muted">还没有生效的记忆。</p>
+        <p v-if="!activeMemories.length" class="muted">暂无生效记忆。</p>
         <div v-for="m in activeMemories" :key="m.id" class="ritem">
           <p>{{ m.content }}</p>
           <p class="muted">{{ memoryLevelLabel(m.level) }}</p>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 我的脚本：试运行 / 运行 / 设为定时任务。
+// 插件：试运行 / 运行 / 设为定时任务。
 // 试运行结果渲染成步骤清单（人话），不再输出原始 JSON。
 // 三态 + 动作容错（四维评审 FE-5/FE-9）：列表加载走 useAsyncList，
 // trial/run/bind 走 useActionState（进行中禁用、失败提示）；
@@ -48,14 +48,14 @@ async function run(s: Script): Promise<void> {
     await api(`/api/scripts/${s.id}/run`, { method: "POST", body: "{}" });
     runNotes.value = {
       ...runNotes.value,
-      [s.id]: "已开始运行，去「执行记录」可回放；如需拍板会出现在「待我确认」。",
+      [s.id]: "已开始运行，可在「运行历史」中回放；如需审批，将出现在「审批」。",
     };
     void store.refreshBadge();
   });
 }
 
 async function bind(s: Script): Promise<void> {
-  const minutes = prompt("每隔多少分钟自动运行一次？", "60");
+  const minutes = prompt("请输入运行间隔（分钟）", "60");
   if (minutes === null) return;
   // 前端先校验为正整数：非法输入不发请求，直接给提示（四维评审 FE-9）。
   if (!/^\d+$/.test(minutes.trim()) || Number(minutes) <= 0) {
@@ -71,7 +71,7 @@ async function bind(s: Script): Promise<void> {
         name: "定时运行脚本",
       }),
     });
-    alert("已设为定时任务，去「定时任务」里能看到");
+    alert("已设为定时任务，可在「定时任务」中查看");
   });
 }
 
@@ -81,15 +81,15 @@ onMounted(scripts.load);
 <template>
   <section class="view">
     <div class="bar">
-      <h2>我的脚本</h2>
-      <span class="muted">脚本是和助手在聊天里一起做出来的个性化程序</span>
+      <h2>插件</h2>
+      <span class="muted">在对话中与助手共创的个性化程序</span>
     </div>
     <p v-if="scripts.loading.value" class="muted">正在加载脚本…</p>
     <p v-else-if="scripts.error.value" class="err">
       脚本加载失败：{{ scripts.error.value }} <button @click="scripts.retry">重试</button>
     </p>
     <p v-else-if="!scripts.items.value.length" class="muted">
-      还没有脚本。去聊天里说一件想做的事，助手会帮你做成脚本。
+      暂无插件。在「聊天」中描述需求，助手将为你创建插件。
     </p>
     <div v-else class="cards">
       <div v-for="s in scripts.items.value" :key="s.id" class="card">
@@ -116,7 +116,7 @@ onMounted(scripts.load);
             </li>
           </ol>
           <p v-if="trialResults[s.id]!.error" class="err">{{ trialResults[s.id]!.error }}</p>
-          <p v-if="!trialResults[s.id]!.steps.length" class="muted">这一步还没有执行到任何步骤。</p>
+          <p v-if="!trialResults[s.id]!.steps.length" class="muted">暂无执行步骤。</p>
         </div>
         <p v-if="runNotes[s.id]">{{ runNotes[s.id] }}</p>
       </div>

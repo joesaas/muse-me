@@ -1,6 +1,6 @@
 <script setup lang="ts">
-// 待我确认：待审批列表 / 批准 / 拒绝（拒绝要理由，与旧版 prompt 等价）。
-// 加载走统一三态：失败时只显示错误与重试，绝不显示「现在没有需要你确认的事」
+// 审批：待审批列表 / 批准 / 拒绝（拒绝要理由，与旧版 prompt 等价）。
+// 加载走统一三态：失败时只显示错误与重试，绝不显示「暂无待审批事项」之外的空态误导
 // （四维评审 FE-5 的硬性验收）；风险与状态只经 labels.ts 人话映射渲染。
 import { onMounted } from "vue";
 import { api } from "../api";
@@ -19,7 +19,7 @@ async function loadApprovals(): Promise<void> {
 }
 
 async function decide(a: Approval, ok: boolean): Promise<void> {
-  const reason = ok ? "" : prompt("拒绝理由（可空）") || "";
+  const reason = ok ? "" : prompt("请输入拒绝理由（可选）") || "";
   await action.runAction(`decide-${a.id}`, async () => {
     await api(`/api/approvals/${a.id}/decide`, {
       method: "POST",
@@ -35,14 +35,14 @@ onMounted(loadApprovals);
 <template>
   <section class="view">
     <div class="bar">
-      <h2>待我确认</h2>
-      <span class="muted">花钱或重要操作都会先停在这里等你拍板</span>
+      <h2>审批</h2>
+      <span class="muted">涉及资金或重要操作须先经审批</span>
     </div>
-    <p v-if="approvals.loading.value" class="muted">正在加载待确认事项…</p>
+    <p v-if="approvals.loading.value" class="muted">正在加载审批事项…</p>
     <p v-else-if="approvals.error.value" class="err">
-      待确认事项加载失败：{{ approvals.error.value }} <button @click="approvals.retry">重试</button>
+      审批事项加载失败：{{ approvals.error.value }} <button @click="approvals.retry">重试</button>
     </p>
-    <p v-else-if="!approvals.items.value.length" class="muted">现在没有需要你确认的事。</p>
+    <p v-else-if="!approvals.items.value.length" class="muted">暂无待审批事项。</p>
     <div v-else class="cards">
       <div v-for="a in approvals.items.value" :key="a.id" class="card">
         <h3>{{ a.title }}</h3>

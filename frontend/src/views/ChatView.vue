@@ -10,7 +10,7 @@ import { useRoute, useRouter } from "vue-router";
 import { api, apiErrorText } from "../api";
 import { useAsyncList } from "../composables/useAsyncList";
 import { useRunStream } from "../composables/useRunStream";
-import { toolLabel } from "../labels";
+import { relativeTimeLabel, toolLabel } from "../labels";
 import type { Chat, Message, Run } from "../types";
 import {
   isTerminalEventType,
@@ -125,7 +125,7 @@ const stream = useRunStream((e) => {
       live.extras.push({
         kind: "msg",
         role: "system",
-        content: "有一件事停在「待我确认」里等你拍板",
+        content: "有一项审批待处理，请前往「审批」处理",
       });
       persistLive();
       renderItems();
@@ -317,7 +317,7 @@ onUnmounted(() => window.removeEventListener("focus", onFocus));
             :class="{ active: c.id === currentChat }"
             @click="selectChat(c.id)"
           >
-            {{ c.title }}<small>{{ c.kind === "side" ? "新话题" : "主聊" }} · {{ c.updated_at }}</small>
+            {{ c.title }}<small>{{ c.kind === "side" ? "新话题" : "主聊" }} · {{ relativeTimeLabel(c.updated_at) }}</small>
           </li>
         </ul>
       </div>
@@ -335,7 +335,7 @@ onUnmounted(() => window.removeEventListener("focus", onFocus));
           <textarea
             v-model="input"
             rows="2"
-            placeholder="说你想做的事，例如：看到一条新闻想买里面的 meme，100 美元，先查流动性"
+            placeholder="请描述你的需求，例如：根据一条新闻买入其中的 meme，100 美元，并先核查流动性"
           ></textarea>
           <button :disabled="sending" @click="send">{{ sending ? "发送中…" : "发送" }}</button>
           <button class="ghost" @click="stop">停止</button>

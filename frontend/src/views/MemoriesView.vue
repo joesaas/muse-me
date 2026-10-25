@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 它记得的事：记忆列表 / 批准记住 / 不要记 / 删掉。
+// 记忆：记忆列表 / 批准 / 不记录 / 删除。
 // 加载走统一三态；决策按钮只对 pending 显示（四维评审 FE-8，
 // 后端 decide 只许 pending，rejected 再点必然 409）；
 // 级别做 fact/inference/never 三值映射，never 不再标成「推测」。
@@ -35,14 +35,14 @@ onMounted(memories.load);
 <template>
   <section class="view">
     <div class="bar">
-      <h2>它记得的事</h2>
-      <span class="muted">推测类的内容要你批准后才算数</span>
+      <h2>记忆</h2>
+      <span class="muted">推测类记忆需审批后生效</span>
     </div>
     <p v-if="memories.loading.value" class="muted">正在加载记忆…</p>
     <p v-else-if="memories.error.value" class="err">
       记忆加载失败：{{ memories.error.value }} <button @click="memories.retry">重试</button>
     </p>
-    <p v-else-if="!memories.items.value.length" class="muted">它还没有记住任何事。</p>
+    <p v-else-if="!memories.items.value.length" class="muted">暂无记忆。</p>
     <div v-else class="cards">
       <div v-for="m in memories.items.value" :key="m.id" class="card">
         <p>{{ m.content }}</p>
@@ -52,10 +52,10 @@ onMounted(memories.load);
         </p>
         <div class="row">
           <template v-if="m.status === 'pending'">
-            <button :disabled="action.busy.value !== null" @click="decide(m, true)">批准记住</button>
-            <button :disabled="action.busy.value !== null" @click="decide(m, false)">不要记</button>
+            <button :disabled="action.busy.value !== null" @click="decide(m, true)">批准</button>
+            <button :disabled="action.busy.value !== null" @click="decide(m, false)">不记录</button>
           </template>
-          <button :disabled="action.busy.value !== null" @click="remove(m)">删掉</button>
+          <button :disabled="action.busy.value !== null" @click="remove(m)">删除</button>
         </div>
       </div>
     </div>
