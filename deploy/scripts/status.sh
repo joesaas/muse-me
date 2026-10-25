@@ -3,6 +3,15 @@
 # 用法（仓库根目录）：bash deploy/scripts/status.sh
 set -u
 
+# 必须以本人账号跑，不要 sudo：systemd 用户服务与口令文件都属于当前用户；
+# sudo 会切到 root，既连不上用户总线（Failed to connect to bus），又会把文件写进 /root。
+# nginx 那几步脚本内自己会 sudo。
+if [ "${EUID}" -eq 0 ]; then
+  echo "请不要用 sudo 跑本脚本：直接 bash deploy/scripts/status.sh，不要加 sudo。" >&2
+  echo "（如果已经用 sudo 跑过，先清掉 /root/.config/museme 与 /root/.config/systemd/user/museme.service，再以本人账号重跑。）" >&2
+  exit 1
+fi
+
 echo "--- 服务 ---"
 systemctl --user is-active museme 2>&1 || true
 systemctl --user status museme --no-pager -l 2>&1 | head -12 || true

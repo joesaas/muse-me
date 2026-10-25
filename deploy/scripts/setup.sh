@@ -14,6 +14,15 @@
 #   也可显式指定：PYTHON_BIN=python3.12 bash deploy/scripts/setup.sh --form a
 set -euo pipefail
 
+# 必须以本人账号跑，不要 sudo：systemd 用户服务与口令文件都属于当前用户；
+# sudo 会切到 root，既连不上用户总线（Failed to connect to bus），又会把文件写进 /root。
+# nginx 那几步脚本内自己会 sudo。
+if [ "${EUID}" -eq 0 ]; then
+  echo "请不要用 sudo 跑本脚本：直接 bash deploy/scripts/setup.sh，不要加 sudo。" >&2
+  echo "（如果已经用 sudo 跑过，先清掉 /root/.config/museme 与 /root/.config/systemd/user/museme.service，再以本人账号重跑。）" >&2
+  exit 1
+fi
+
 # 输出一个可用的 Python ≥ 3.11 的命令名，找不到返回非零。
 # 不替换系统 python3：另装一个新版即可，本函数会挑到它。
 resolve_python() {
