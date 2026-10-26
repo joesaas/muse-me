@@ -34,9 +34,12 @@ pre{background:#0f172a;color:#dbe7ff;border-radius:8px;padding:10px;overflow:aut
 input[type=text],input[type=number]{border:1px solid #d4d9e2;border-radius:8px;padding:7px 9px}
 .main{min-width:0}
 .right{width:300px;flex-shrink:0;background:#fff;border-left:1px solid #e2e6ee;padding:20px 16px;overflow:auto;display:flex;flex-direction:column;gap:24px}
-.rhead{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px}
+.rhead{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:10px}
 .rhead h3{margin:0;font-size:16px;font-weight:650;display:flex;align-items:center;gap:6px}
-.rhead a{font-size:13px;color:#2b4acb;text-decoration:none;white-space:nowrap}
+.rhead a{font-size:12px;color:#5f6b84;text-decoration:none;white-space:nowrap}
+.rhead a:hover{color:#2b4acb;text-decoration:underline}
+.rlinks{display:flex;align-items:center;gap:8px}
+.rsep{width:1px;height:12px;background:#d4d9e2;flex-shrink:0}
 .ritem{border:1px solid #e2e6ee;border-radius:12px;padding:12px 14px;margin-bottom:10px}
 .ritem h4{margin:0 0 6px;font-size:14px;font-weight:600;line-height:1.4;display:flex;align-items:center;justify-content:space-between;gap:8px}
 .ritem h4>span:first-child{min-width:0}

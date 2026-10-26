@@ -81,7 +81,7 @@ onUnmounted(() => {
     <section class="rsec">
       <div class="rhead">
         <h3>审批<span v-if="pending.length" class="badge">{{ pending.length }}</span></h3>
-        <RouterLink to="/approvals">全部 →</RouterLink>
+        <span class="rlinks"><RouterLink to="/approvals">全部 →</RouterLink></span>
       </div>
       <p v-if="approvals.loading.value" class="muted">正在加载…</p>
       <p v-else-if="approvals.error.value" class="err">
@@ -113,7 +113,10 @@ onUnmounted(() => {
     <section class="rsec">
       <div class="rhead">
         <h3>运行历史</h3>
-        <span><RouterLink to="/jobs">定时任务 →</RouterLink> · <RouterLink to="/runs">全部 →</RouterLink></span>
+        <span class="rlinks"
+          ><RouterLink to="/jobs">定时任务 →</RouterLink><span class="rsep" aria-hidden="true"></span
+          ><RouterLink to="/runs">全部 →</RouterLink></span
+        >
       </div>
       <p v-if="runs.loading.value" class="muted">正在加载…</p>
       <p v-else-if="runs.error.value" class="err">
@@ -132,7 +135,10 @@ onUnmounted(() => {
     <section class="rsec">
       <div class="rhead">
         <h3>个人指纹</h3>
-        <span><RouterLink to="/memories">记忆 →</RouterLink> · <RouterLink to="/settings">账号与连接 →</RouterLink></span>
+        <span class="rlinks"
+          ><RouterLink to="/memories">记忆 →</RouterLink><span class="rsep" aria-hidden="true"></span
+          ><RouterLink to="/settings">账号与连接 →</RouterLink></span
+        >
       </div>
       <p v-if="memories.loading.value || connections.loading.value" class="muted">正在加载…</p>
       <p v-else-if="memories.error.value" class="err">
