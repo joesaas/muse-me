@@ -159,13 +159,19 @@ export interface NewsSourcePort {
   fetch(query: string, limit: number): RawNewsItem[];
 }
 
-/** 原子工具注册表端口：白名单 + 确定性模拟实现，结果带 simulated 标注与 cost_usd。 */
+/**
+ * 原子工具注册表端口：白名单 + 结果带 cost_usd。
+ * call 是异步口径——真实 API 工具（OKX 等）需要网络 I/O；确定性模拟
+ * 实现同样以 async 返回（逻辑仍同步）。mode 语义：simulate=试运行/
+ * 干跑（下单工具只出预览），execute=正式运行（下单工具真实执行），
+ * live=保留的拒绝态（真实环境由各工具自己的配置定，不由 mode 定）。
+ */
 export interface ToolRegistryPort {
   call(
     name: string,
     args: Record<string, unknown>,
     mode?: string,
-  ): Record<string, unknown>;
+  ): Promise<Record<string, unknown>>;
   getTool(
     name: string,
   ): { name: string; risk: string; params: Readonly<Record<string, string>> } | undefined;

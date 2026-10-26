@@ -108,7 +108,9 @@ export class ApprovalService {
       return decided;
     }
     if (run.scriptId && this.scripts) {
-      this.scripts.resume(run.id);
+      // 续跑是异步执行（含真实下单）：必须 await，否则审批返回后
+      // 订单仍在后台无主执行、失败也无人收口。
+      await this.scripts.resume(run.id);
     } else if (run.source === "chat" || run.chatId) {
       await this.chats.resumeAfterApproval(run, decided);
     }
