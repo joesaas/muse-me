@@ -28,6 +28,19 @@ const memories = useAsyncList<MemoryItem>(() => api<MemoryItem[]>("/api/memories
 const connections = useAsyncList<Connection>(() => api<Connection[]>("/api/settings/connections"));
 const action = useActionState();
 
+// 状态 pill 配色：只按原始 status 分档，不改动状态本身的语义。
+function statusPillClass(status: string): string {
+  if (status === "ok" || status === "connected") return "pill pill-ok";
+  if (status === "error" || status === "failed") return "pill pill-bad";
+  return "pill pill-neutral";
+}
+
+// 仅展示层面的数字收敛：把 3 位以上小数的数字抹成 2 位（如余额 4900.000324724 → 4900.00），
+// 不改动任何业务数值，只让卡片里的数字可读。
+function formatDetail(detail: string): string {
+  return detail.replace(/\d+\.\d{3,}/g, (m) => parseFloat(m).toFixed(2));
+}
+
 const pending = computed(() => approvals.items.value.filter((a) => a.status === "pending"));
 const decided = computed(() =>
   approvals.items.value.filter((a) => a.status !== "pending").slice(0, 3),
@@ -136,8 +149,11 @@ onUnmounted(() => {
         连接加载失败：{{ connections.error.value }} <button @click="connections.retry">重试</button>
       </p>
       <div v-for="c in connections.items.value" :key="c.name" class="ritem">
-        <h4>{{ c.name }}</h4>
-        <p>{{ connectionStatusLabel(c.status) }}<span v-if="c.detail"> · {{ c.detail }}</span></p>
+        <h4>
+          <span>{{ c.name }}</span>
+          <span :class="statusPillClass(c.status)">{{ connectionStatusLabel(c.status) }}</span>
+        </h4>
+        <p v-if="c.detail">{{ formatDetail(c.detail) }}</p>
       </div>
     </section>
   </aside>
